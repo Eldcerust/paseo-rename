@@ -18,7 +18,7 @@ Open **Chat titles** in the normal plugin settings, or **Chat titles settings** 
 
 - Submit **`/retitle`**, without arguments, in the chat you want to rename. The command does not send a prompt to that chat's provider. It opens a result screen while the plugin runs a separate title helper.
 - The Command Center's **Rename this chat from recent messages** does the same thing for its current chat.
-- Click **Auto rename** in the composer for **Rename now** and **Auto-rename settings**. If Pill hub is running and merging is enabled for Auto rename, these actions appear inside its **Tools** pill instead. Turn that tool's merge switch off in Pill hub to restore its standalone pill. No Pill hub installation is required.
+- Click **Auto rename** in the composer. It shows this chat's current title and how the last rename went (renamed, title still fits, left unchanged, or what failed and for which target, with the time), then offers **Rename now** and **Auto-rename settings**. If Pill hub is running and merging is enabled for Auto rename, these actions appear inside its **Tools** pill instead. Turn that tool's merge switch off in Pill hub to restore its standalone pill. No Pill hub installation is required.
 - Manual renaming can replace a custom title. Automatic renaming leaves a title you chose alone. A manual title change while an automatic model request is running is protected too.
 - Results describe the chat and workspace separately. A chat rename can succeed while a workspace rename fails or is skipped. Recent outcomes retain those details.
 

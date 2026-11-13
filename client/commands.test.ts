@@ -78,6 +78,30 @@ describe("chat-title client commands", () => {
     const h = harness(); h.result({ ...result, status, reason: "No new topic" });
     await h.submit(); expect(describeResult({ ...result, status, reason: "No new topic" })).toContain("No new topic");
   });
+  it("keeps the structured outcome and a finish time in the state, not only a sentence", async () => {
+    const h = harness(); const before = Date.now(); await h.submit();
+    const state = commandStore(h.client.paseo).snapshot();
+    expect(state).toMatchObject({ agentId: "current", pending: false, result: { status: "renamed", title: "Fix workspace archiving" } });
+    expect(state?.failed).toBeUndefined(); expect(state?.at).toBeGreaterThanOrEqual(before);
+  });
+  it("marks a partial failure as failed while keeping the result that says what worked", async () => {
+    const h = harness(); h.result({ ...result, workspace: { status: "failed", detail: "Workspace access denied" } });
+    await expect(h.submit()).rejects.toThrow(); const state = commandStore(h.client.paseo).snapshot();
+    expect(state).toMatchObject({ pending: false, failed: true, result: { status: "renamed", workspace: { status: "failed" } } });
+  });
+  it("marks a transport failure as failed with no result", async () => {
+    const h = harness(); h.rpc.mockImplementationOnce(async () => { throw new Error("Host disconnected"); });
+    await expect(h.submit()).rejects.toThrow("Host disconnected");
+    const state = commandStore(h.client.paseo).snapshot();
+    expect(state).toMatchObject({ pending: false, failed: true }); expect(state?.result).toBeUndefined();
+  });
+  it("shows a pending state with no stale outcome while the next run is going", async () => {
+    const h = harness(); await h.submit(); let release!: () => void;
+    h.rpc.mockImplementationOnce(() => new Promise((resolve) => { release = () => resolve({ jobId: "job", kind: "retitle", agentId: "current" }); }));
+    const next = h.submit(); const pending = commandStore(h.client.paseo).snapshot();
+    expect(pending).toMatchObject({ pending: true }); expect(pending?.result).toBeUndefined(); expect(pending?.failed).toBeUndefined();
+    release(); await next;
+  });
   it("removes all registrations once and rejects retained handlers after teardown", async () => {
     const h = harness(); h.cleanup(); h.cleanup();
     h.removers.forEach((remove) => expect(remove).toHaveBeenCalledTimes(1));

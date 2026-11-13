@@ -5,7 +5,8 @@ import contribute from "../index.client";
 import { contributePills } from "./pills";
 import { createRenameActions } from "./commands";
 
-vi.mock("react-native", () => ({ Pressable: "Pressable", Text: "Text", View: "View" }));
+vi.mock("react-native", () => ({ ActivityIndicator: "ActivityIndicator", Pressable: "Pressable", Text: "Text", View: "View" }));
+vi.mock("@getpaseo/plugin/client/ui", () => ({ Icon: "Icon" }));
 vi.mock("react", async (original) => ({ ...await original<typeof import("react")>(), useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) => snapshot() }));
 vi.mock("@tanstack/react-query", () => ({ useMutation: ({ mutationFn }: { mutationFn: () => unknown }) => ({ mutate: mutationFn, isPending: false, isError: false }) }));
 vi.mock("./settings-screen", () => ({ TitleSettingsScreen: () => null, TitleScreen: () => null }));
@@ -147,6 +148,31 @@ describe("Auto rename settings and composer tool", () => {
   it("unsubscribes once and ignores retained deliveries after disposal", async () => {
     const h = harness(); const stop = contributePills(h.client, h.actions); await tick(); h.snapshot([agent("a")]); stop(); stop(); h.snapshot([agent("b")]); h.upsert(agent("c"));
     expect(h.unsubscribe).toHaveBeenCalledTimes(1); expect(h.own).toHaveLength(1); expect(bus().listeners.size).toBe(0); h.actions.dispose();
+  });
+  function cardTitle(Content: (props: PluginButtonContentProps) => any): unknown {
+    const seek = (node: any): any => {
+      if (!isValidElement(node)) return undefined;
+      const p = node.props as any;
+      if ("colors" in p && "status" in p && "title" in p) return p;
+      for (const child of React.Children.toArray(p.children)) { const found = seek(child); if (found) return found; }
+      return undefined;
+    };
+    return seek(Content(props))?.title;
+  }
+  it("feeds each chat's live title to its popover and follows renames, workspace moves and removal", async () => {
+    const h = harness(); const stop = contributePills(h.client, h.actions); await tick();
+    h.snapshot([agent("a", { title: "First" }), agent("b", { title: null })]);
+    const popover = (index: number) => (h.own[index].button.behavior as any).Content;
+    expect(cardTitle(popover(0))).toBe("First"); expect(cardTitle(popover(1))).toBeNull();
+    h.upsert(agent("a", { title: "Second" })); expect(h.own).toHaveLength(2); expect(cardTitle(popover(0))).toBe("Second");
+    h.upsert(agent("a", { title: "Moved", workspaceId: "new" })); expect(h.own).toHaveLength(3); expect(cardTitle(popover(2))).toBe("Moved");
+    h.remove("a"); expect(cardTitle(popover(2))).toBeUndefined();
+    stop(); expect(cardTitle(popover(1))).toBeUndefined(); h.actions.dispose();
+  });
+  it("does not remember the title of a chat that turned ineligible", async () => {
+    const h = harness(); const stop = contributePills(h.client, h.actions); await tick(); h.snapshot([agent("a", { title: "Kept" })]);
+    const Content = (h.own[0].button.behavior as any).Content; expect(cardTitle(Content)).toBe("Kept");
+    h.upsert(agent("a", { title: "[Chat titles] naming a chat" })); expect(cardTitle(Content)).toBeUndefined(); stop(); h.actions.dispose();
   });
   it("routes Rename now and settings through the owner, not the hub's agent or providers", async () => {
     const h = harness(); const stop = contributePills(h.client, h.actions); await tick(); h.snapshot([agent("a")]);

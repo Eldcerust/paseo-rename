@@ -6,7 +6,12 @@ import { observeJob } from "./jobs";
 export const TITLES_SCREEN = "titles";
 export const TITLES_SETTINGS = "titles";
 
-export interface CommandState { agentId: string; pending: boolean; message: string }
+/**
+ * What the popover and settings screen show for one chat. `result` is the structured outcome (the popover
+ * draws it; `message` is the same thing as one sentence for screen readers and the settings screen),
+ * `failed` marks a run that ended in an error or partial failure, and `at` is the client clock when it ended.
+ */
+export interface CommandState { agentId: string; pending: boolean; message: string; result?: RetitleResult; failed?: boolean; at?: number }
 const stores = new WeakMap<object, ReturnType<typeof createCommandStore>>();
 function createCommandStore() {
   let state: CommandState | undefined;
@@ -49,16 +54,18 @@ export function createRenameActions(client: PluginClientContext) {
     if (pending.has(id)) throw new Error("A rename of this chat is already running.");
     pending.add(id);
     store.set({ agentId: id, pending: true, message: "Writing a title from recent messages…" });
+    let outcome: RetitleResult | undefined;
     try {
       const job = await observeJob<"retitle">(() => rpc(retitleChat, { agentId: id, force: true }), (input) => rpc(titleJobStatus, input), { signal: lifetime.signal, kind: "retitle", agentId: id });
+      outcome = job.result;
       if (job.state === "failed") throw new Error(job.result ? `${describeResult(job.result)} ${job.error}` : job.error);
       const result = job.result;
-      if (!disposed) store.set({ agentId: id, pending: false, message: describeResult(result) });
+      if (!disposed) store.set({ agentId: id, pending: false, message: describeResult(result), result, at: Date.now() });
       if (result.status === "failed" || result.chat?.status === "failed" || result.workspace?.status === "failed") {
         throw new Error(describeResult(result));
       }
     } catch (error) {
-      if (!disposed) store.set({ agentId: id, pending: false, message: error instanceof Error ? error.message : String(error) });
+      if (!disposed) store.set({ agentId: id, pending: false, message: error instanceof Error ? error.message : String(error), failed: true, result: outcome, at: Date.now() });
       throw error;
     } finally {
       pending.delete(id);

@@ -3,9 +3,12 @@ import type { PluginButtonRegistration, PluginClientContext } from "@getpaseo/pl
 import type { RenameActions } from "./commands";
 import { registerComposerPill } from "./hub-compat";
 import { createTitlePopover } from "./pill-popover";
+import { createTitleStore } from "./title-store";
 
 export function contributePills(client: PluginClientContext, actions: RenameActions) {
   const lifetime = new AbortController();
+  // Live chat titles for the popover's title card, fed by the same directory that decides which chats get a pill.
+  const titles = createTitleStore();
   const pills = new Map<string, { workspaceId: string; registration: PluginButtonRegistration }>();
   let unsubscribe: (() => void) | undefined;
   let connection: AbortController | undefined;
@@ -13,17 +16,18 @@ export function contributePills(client: PluginClientContext, actions: RenameActi
   let epoch = 0;
   let snapshotEpoch = 0;
   let buffered: (() => void)[] | undefined;
-  function remove(id: string) { pills.get(id)?.registration.remove(); pills.delete(id); }
+  function remove(id: string) { pills.get(id)?.registration.remove(); pills.delete(id); titles.delete(id); }
   function observe(agent: PaseoAgent) {
     if (lifetime.signal.aborted) return;
     const workspaceId = agent.workspaceId;
     const parent = (agent as PaseoAgent & { parentAgentId?: string | null }).parentAgentId;
     if (!workspaceId || agent.archivedAt || agent.internal || parent || agent.labels?.["paseo.parent-agent-id"] || agent.labels?.["chat-title"] === "helper" || agent.title?.startsWith("[Chat titles]")) { remove(agent.id); return; }
-    if (pills.get(agent.id)?.workspaceId === workspaceId) return;
+    if (pills.get(agent.id)?.workspaceId === workspaceId) { titles.set(agent.id, agent.title); return; }
     remove(agent.id);
+    titles.set(agent.id, agent.title);
     pills.set(agent.id, { workspaceId, registration: registerComposerPill(client, {
       toolId: "auto-rename", agentId: agent.id, workspaceId, glyph: "CaseSensitive",
-      button: { title: "Auto rename", label: "Auto rename", icon: "CaseSensitive", behavior: { kind: "popover", Content: createTitlePopover(client, actions, agent.id) } },
+      button: { title: "Auto rename", label: "Auto rename", icon: "CaseSensitive", behavior: { kind: "popover", Content: createTitlePopover(client, actions, agent.id, titles) } },
     }) });
   }
   type Page = Awaited<ReturnType<typeof client.paseo.agents.list>>;
@@ -88,5 +92,6 @@ export function contributePills(client: PluginClientContext, actions: RenameActi
     connection?.abort();
     unsubscribe?.();
     for (const id of pills.keys()) remove(id);
+    titles.clear();
   };
 }

@@ -6,7 +6,7 @@ The default window is the last 10 conversational messages, capped at 600 charact
 
 Requires Paseo 0.15.4 or later on the daemon and app, a configured agent provider, and the Paseo CLI on the daemon machine. Open Chat titles settings to choose any available daemon provider and search its models. Prefix-based model catalogs have a sub-provider column like Pill hub; flat catalogs do not. Unavailable providers show their reported reason. Choosing a model saves both provider and model together for the selected host.
 
-The normal Chat titles settings entry controls automatic renaming, its interval, recent-message window, targets and model. The clickable Auto rename composer tool offers Rename now and Auto-rename settings. With Pill hub installed and its merge switch on, the same tool appears inside Tools; otherwise it has its own pill. Settings always open in Chat titles, even from inside Tools.
+The normal Chat titles settings entry controls automatic renaming, its interval, recent-message window, targets and model. The clickable Auto rename composer tool shows this chat's current title and the outcome of the last rename, and offers Rename now and Auto-rename settings. With Pill hub installed and its merge switch on, the same tool appears inside Tools; otherwise it has its own pill. Settings always open in Chat titles, even from inside Tools.
 
 Pill hub v1 shares its bus across connected hosts. For multi-host use, install the hub on each host using Chat titles and align their Auto rename merge switches. Mixed installations can hide the composer tool on a host without its own hub. Turn that tool's merge switch off in all active hubs to use standalone pills instead. Standard settings and Command Center actions are unaffected.
 
