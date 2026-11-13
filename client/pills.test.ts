@@ -8,7 +8,11 @@ import { createRenameActions } from "./commands";
 vi.mock("react-native", () => ({ ActivityIndicator: "ActivityIndicator", Pressable: "Pressable", Text: "Text", View: "View" }));
 vi.mock("@getpaseo/plugin/client/ui", () => ({ Icon: "Icon" }));
 vi.mock("react", async (original) => ({ ...await original<typeof import("react")>(), useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) => snapshot() }));
-vi.mock("@tanstack/react-query", () => ({ useMutation: ({ mutationFn }: { mutationFn: () => unknown }) => ({ mutate: mutationFn, isPending: false, isError: false }) }));
+vi.mock("@tanstack/react-query", () => ({
+  useMutation: ({ mutationFn }: { mutationFn: () => unknown }) => ({ mutate: mutationFn, isPending: false, isError: false }),
+  useQuery: () => ({ data: undefined, isPending: true, isError: false, refetch: () => {} }),
+  useQueryClient: () => ({ setQueryData: () => {} }),
+}));
 vi.mock("./settings-screen", () => ({ TitleSettingsScreen: () => null, TitleScreen: () => null }));
 
 const KEY = "__paseoPillHub";

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import contribute from "../index.server";
 import { settingsFallback } from "../shared/settings";
-import { retitleChat, titleJobStatus, titleTest } from "../shared/rpc";
+import { retitleChat, setTitleChatAuto, titleJobStatus, titleTest } from "../shared/rpc";
 import { createStateStore, statePath } from "./state";
 import { DEBOUNCE_MS, type TurnEvent } from "./auto";
 import { renameAgentWithCli } from "./cli";
@@ -108,6 +108,8 @@ describe("graceful shutdown through the real services", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     const w = setup(); let acknowledgement: any;
     if (path === "auto") {
+      // Automatic renaming is off for every chat until it is switched on, here through the real RPC.
+      await w.handlers.get(setTitleChatAuto.name)!({ agentId: "target", enabled: true }, { paseo: w.daemon });
       await w.hook({ agent: { id: "target", workspaceId: "target-workspace", parentAgentId: null, cwd: "C:/test-target", title: null }, outcome: { kind: "completed" } }, { paseo: w.daemon });
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
     } else {

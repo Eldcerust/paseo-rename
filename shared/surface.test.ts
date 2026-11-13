@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { modelsFor, providersOf } from "../client/model-pick";
 import { boundedInteger, settingsWithModel } from "../client/settings-values";
 import { createCatalog, agentProviderOf, type CatalogSource } from "../server/catalog";
-import { retitleChat, titleJobStatus, titleModels, titleOverview, titleProviders, titleTest } from "./rpc";
+import { retitleChat, setTitleChatAuto, titleChatAuto, titleJobStatus, titleModels, titleOverview, titleProviders, titleTest } from "./rpc";
 import { chatTitleSettings } from "./settings";
 
 const prefixed = [{ id: "openai/title-small", label: "Title Small" }, { id: "anthropic/title-fast", label: "Title Fast" }];
@@ -63,6 +63,9 @@ describe("joined client/settings/server surfaces", () => {
     const sample = { jobId: "sample-request", kind: "sample" };
     roundtrip(titleTest.input, {}); roundtrip(titleTest.output, sample);
     roundtrip(titleJobStatus.output, { found: true, job: { ...sample, state: "succeeded", createdAt: outcome.at, updatedAt: outcome.at, expiresAt: outcome.at, result: { title: "Archive workspace", model: "claude/claude-haiku-5-5", ms: 120 } } });
+    const chat = { agentId: "a", enabled: true, allowed: true, everyTurns: 4 };
+    roundtrip(titleChatAuto.input, { agentId: "a" }); roundtrip(titleChatAuto.output, chat);
+    roundtrip(setTitleChatAuto.input, { agentId: "a", enabled: false }); roundtrip(setTitleChatAuto.output, { ...chat, enabled: false, allowed: false });
     expect(retitleChat.input.safeParse({ agentId: "" }).success).toBe(false);
     expect(titleTest.output.safeParse({ title: "Title", model: "x", ms: -1 }).success).toBe(false);
   });
@@ -76,7 +79,7 @@ describe("joined client/settings/server surfaces", () => {
     };
     const cleanup = contribute(server as never);
     expect(server.registerSettings).toHaveBeenCalledWith(chatTitleSettings);
-    expect([...handlers.keys()].sort()).toEqual([retitleChat, titleJobStatus, titleOverview, titleProviders, titleModels, titleTest].map((rpc) => rpc.name).sort());
+    expect([...handlers.keys()].sort()).toEqual([retitleChat, titleJobStatus, titleOverview, titleProviders, titleModels, titleTest, titleChatAuto, setTitleChatAuto].map((rpc) => rpc.name).sort());
     expect(server.addHook).toHaveBeenCalledWith("agent.turn.after", expect.any(Function));
     const providers = titleProviders.output.parse(await handlers.get(titleProviders.name)({}, { paseo: source }));
     expect(providers.providers.map((p) => p.id)).toContain("claude");

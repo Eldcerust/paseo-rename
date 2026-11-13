@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { retitleChat, titleJobStatus, titleModels, titleOverview, titleProviders, titleTest } from "./rpc";
+import { chatAutoSchema, retitleChat, setTitleChatAuto, titleChatAuto, titleJobStatus, titleModels, titleOverview, titleProviders, titleTest } from "./rpc";
 import { jobSnapshotSchema, sampleResultSchema } from "./jobs";
 import {
   CHARS_MAX,
@@ -104,5 +104,21 @@ describe("rpc contract", () => {
     expect(titleJobStatus.input.parse({ jobId: "opaque-id" })).toEqual({ jobId: "opaque-id" });
     expect(titleJobStatus.input.safeParse({ jobId: "" }).success).toBe(false);
     expect(titleTest.output.safeParse({ jobId: "sample-1", kind: "retitle" }).success).toBe(false);
+  });
+
+  it("describes a chat's automatic renaming switch with the master switch and the interval", () => {
+    const chat = { agentId: "a", enabled: false, allowed: true, everyTurns: 4 };
+    expect(chatAutoSchema.parse(chat)).toEqual(chat);
+    expect(titleChatAuto.output.parse(chat)).toEqual(chat);
+    for (const bad of [{ ...chat, enabled: "no" }, { ...chat, allowed: undefined }, { ...chat, everyTurns: 0 }, { ...chat, everyTurns: 1.5 }, { ...chat, agentId: "" }]) expect(chatAutoSchema.safeParse(bad).success).toBe(false);
+  });
+  it("needs a chat id of a sane length on both switch contracts and a real boolean to write", () => {
+    expect(titleChatAuto.input.safeParse({ agentId: "a".repeat(200) }).success).toBe(true);
+    expect(titleChatAuto.input.safeParse({ agentId: "a".repeat(201) }).success).toBe(false);
+    expect(setTitleChatAuto.input.safeParse({ agentId: "a", enabled: true }).success).toBe(true);
+    for (const bad of [{ agentId: "a" }, { agentId: "a", enabled: "true" }, { agentId: "", enabled: true }, { enabled: true }]) expect(setTitleChatAuto.input.safeParse(bad).success).toBe(false);
+  });
+  it("keeps automatic renaming's master switch on by default so a chat can opt in without a settings visit", () => {
+    expect(settingsFallback.auto.enabled).toBe(true);
   });
 });

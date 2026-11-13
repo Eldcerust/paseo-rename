@@ -50,3 +50,25 @@ export const titleJobStatus = defineRpc({
   input: z.object({ jobId: z.string().min(1).max(200) }),
   output: jobStatusSchema,
 });
+
+/**
+ * One chat's automatic renaming switch. Every chat starts off. `allowed` is the host's master switch
+ * (the plugin setting): a chat renames itself only when both are on. `everyTurns` is the host interval.
+ */
+export const chatAutoSchema = z.object({ agentId: z.string().min(1), enabled: z.boolean(), allowed: z.boolean(), everyTurns: z.number().int().min(1) });
+export type ChatAuto = z.infer<typeof chatAutoSchema>;
+const chatId = z.string().min(1).max(200);
+
+/** Reads whether this chat renames itself automatically. */
+export const titleChatAuto = defineRpc({
+  name: "chat-title.chat-auto",
+  input: z.object({ agentId: chatId }),
+  output: chatAutoSchema,
+});
+
+/** Switches automatic renaming on or off for this chat and remembers it. */
+export const setTitleChatAuto = defineRpc({
+  name: "chat-title.set-chat-auto",
+  input: z.object({ agentId: chatId, enabled: z.boolean() }),
+  output: chatAutoSchema,
+});

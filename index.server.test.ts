@@ -2,12 +2,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import contribute from "./index.server";
 import { settingsFallback } from "./shared/settings";
-import { retitleChat, titleJobStatus, titleModels, titleOverview, titleProviders, titleTest } from "./shared/rpc";
+import { retitleChat, setTitleChatAuto, titleChatAuto, titleJobStatus, titleModels, titleOverview, titleProviders, titleTest } from "./shared/rpc";
 
-const f = vi.hoisted(() => ({ retitle: vi.fn(), overview: vi.fn(), test: vi.fn(), providers: vi.fn(), models: vi.fn(), onTurnEnded: vi.fn(), stop: vi.fn(), idle: vi.fn(), settings: undefined as undefined | (() => Promise<unknown>) }));
+const f = vi.hoisted(() => ({ retitle: vi.fn(), overview: vi.fn(), test: vi.fn(), providers: vi.fn(), models: vi.fn(), onTurnEnded: vi.fn(), stop: vi.fn(), idle: vi.fn(), chatAuto: vi.fn(), setChatAuto: vi.fn(), settings: undefined as undefined | (() => Promise<unknown>) }));
 vi.mock("./server/retitle", () => ({ createRetitler: (deps: { settings: () => Promise<unknown> }) => { f.settings = deps.settings; return { ...f, catalog: () => ({ providers: f.providers, models: f.models }) }; } }));
 vi.mock("./server/auto", () => ({ createAuto: () => f }));
-vi.mock("./server/state", () => ({ createStateStore: () => ({}), statePath: () => "not-used" }));
+vi.mock("./server/state", () => ({ createStateStore: () => ({ chatAuto: f.chatAuto, setChatAuto: f.setChatAuto }), statePath: () => "not-used" }));
 beforeEach(() => vi.resetAllMocks());
 const result = { agentId: "chat", status: "unchanged", at: new Date(0).toISOString() };
 const sampleResult = { title: "Sample title", model: "provider/model", ms: 10 };
@@ -28,7 +28,7 @@ function setup(ready = true) {
 
 describe("server entry", () => {
   it("registers the shared settings and every RPC", async () => {
-    const w = setup(); expect(w.handlers.size).toBe(6); expect(await f.settings!()).toEqual(settingsFallback);
+    const w = setup(); expect(w.handlers.size).toBe(8); expect(await f.settings!()).toEqual(settingsFallback);
     const paseo = {}; f.retitle.mockResolvedValue(result); f.test.mockResolvedValue(sampleResult);
     const rename = await w.handlers.get(retitleChat.name)!({ agentId: "chat", force: true }, { paseo });
     expect(rename).toMatchObject({ kind: "retitle", agentId: "chat", jobId: expect.any(String) });
@@ -49,6 +49,24 @@ describe("server entry", () => {
     expect(w.server.addHook).toHaveBeenCalledWith("agent.turn.after", expect.any(Function));
     await w.hook(event, { paseo }); expect(f.onTurnEnded).toHaveBeenCalledWith(event, paseo);
     await w.cleanup!(); expect(w.unhook).toHaveBeenCalledTimes(1); expect(f.stop).toHaveBeenCalledTimes(1); expect(f.idle).toHaveBeenCalledTimes(1);
+  });
+  it("reads a chat switch together with the host master switch and interval", async () => {
+    const w = setup(); f.chatAuto.mockResolvedValue(true);
+    expect(await w.handlers.get(titleChatAuto.name)!({ agentId: "chat" }, {})).toEqual({ agentId: "chat", enabled: true, allowed: settingsFallback.auto.enabled, everyTurns: settingsFallback.auto.everyTurns });
+    expect(f.chatAuto).toHaveBeenCalledWith("chat"); await w.cleanup();
+  });
+  it("writes a chat switch, then answers with what is stored", async () => {
+    const w = setup(); f.setChatAuto.mockResolvedValue(true); f.chatAuto.mockResolvedValue(true);
+    expect(await w.handlers.get(setTitleChatAuto.name)!({ agentId: "chat", enabled: true }, {})).toMatchObject({ agentId: "chat", enabled: true });
+    expect(f.setChatAuto).toHaveBeenCalledWith("chat", true); await w.cleanup();
+  });
+  it("saves nothing when the settings cannot be read, and refuses both switch calls after teardown", async () => {
+    const bad = setup(false);
+    await expect(bad.handlers.get(setTitleChatAuto.name)!({ agentId: "chat", enabled: true }, {})).rejects.toThrow("could not be read");
+    expect(f.setChatAuto).not.toHaveBeenCalled(); await bad.cleanup();
+    const w = setup(); await w.cleanup();
+    await expect(w.handlers.get(titleChatAuto.name)!({ agentId: "chat" }, {})).rejects.toThrow("stopping");
+    await expect(w.handlers.get(setTitleChatAuto.name)!({ agentId: "chat", enabled: true }, {})).rejects.toThrow("stopping");
   });
   it("fails closed for invalid settings instead of enabling automatic renames with defaults", async () => { const w = setup(false); await expect(f.settings!()).rejects.toThrow("could not be read"); await w.cleanup(); });
 

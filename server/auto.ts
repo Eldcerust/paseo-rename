@@ -11,18 +11,22 @@ export interface TurnEvent {
 
 export type AutoDecision =
   | { run: true; why: "first" | "due" }
-  | { run: false; why: "off" | "not-completed" | "helper" | "subagent" | "too-soon" | "not-yet" };
+  | { run: false; why: "off" | "chat-off" | "not-completed" | "helper" | "subagent" | "too-soon" | "not-yet" };
 
 /** Two automatic attempts at one chat are never closer than this, whatever the interval says. */
 export const MIN_GAP_MS = 60_000;
 /** A turn end waits this long for the next one, so a burst of quick turns is one rename. */
 export const DEBOUNCE_MS = 4_000;
 
-type SkipReason = "off" | "not-completed" | "helper" | "subagent";
+type SkipReason = "off" | "chat-off" | "not-completed" | "helper" | "subagent";
 
-/** Why a finished turn is never counted at all, or undefined when it is a candidate. */
-export function skipReason(settings: ChatTitleValues, event: TurnEvent): SkipReason | undefined {
+/**
+ * Why a finished turn is never counted at all, or undefined when it is a candidate. Automatic renaming needs the
+ * host's master setting AND this chat's own switch; every chat starts with its switch off.
+ */
+export function skipReason(settings: ChatTitleValues, event: TurnEvent, chatEnabled: boolean): SkipReason | undefined {
   if (!settings.auto.enabled) return "off";
+  if (!chatEnabled) return "chat-off";
   if (event.outcome.kind !== "completed") return "not-completed";
   if (isHelperAgent(event.agent)) return "helper";
   if (event.agent.parentAgentId) return "subagent";
@@ -33,9 +37,9 @@ export function skipReason(settings: ChatTitleValues, event: TurnEvent): SkipRea
  * Whether an automatic rename should run for a turn that just ended. `memory` already counts this
  * turn. A chat is looked at after its first completed turn, then every `everyTurns` turns.
  */
-export function decideAuto(input: { settings: ChatTitleValues; event: TurnEvent; memory: AgentMemory; now: number }): AutoDecision {
-  const { settings, event, memory, now } = input;
-  const skip = skipReason(settings, event);
+export function decideAuto(input: { settings: ChatTitleValues; event: TurnEvent; memory: AgentMemory; now: number; chatEnabled: boolean }): AutoDecision {
+  const { settings, event, memory, now, chatEnabled } = input;
+  const skip = skipReason(settings, event, chatEnabled);
   if (skip) return { run: false, why: skip };
   if (memory.attemptedAt === undefined) return { run: true, why: "first" };
   if (now - Date.parse(memory.attemptedAt) < MIN_GAP_MS) return { run: false, why: "too-soon" };
@@ -82,6 +86,8 @@ export function createAuto(deps: AutoDeps): Auto {
     if (lifetime.signal.aborted) return;
     const settings = await deps.settings();
     if (lifetime.signal.aborted || !settings.auto.enabled) return;
+    // The chat may have been switched off while its rename waited in the debounce or the queue.
+    if (!(await deps.state.chatAuto(agentId)) || lifetime.signal.aborted) return;
     if (deps.retitler.busy().includes(agentId)) return;
     const before = await deps.state.get(agentId);
     if (before.attemptedAt !== undefined && (now() - Date.parse(before.attemptedAt) < MIN_GAP_MS || before.turns < settings.auto.everyTurns)) return;
@@ -109,10 +115,11 @@ export function createAuto(deps: AutoDeps): Auto {
         if (lifetime.signal.aborted) return;
         const settings = await deps.settings();
         if (lifetime.signal.aborted) return;
-        // Nothing about a turn is stored while automatic renaming is off or does not apply to it.
-        if (skipReason(settings, event)) return;
+        // Nothing about a turn is stored while automatic renaming is off, is off for this chat, or does not apply to it.
+        const chatEnabled = settings.auto.enabled && (await deps.state.chatAuto(event.agent.id));
+        if (lifetime.signal.aborted || skipReason(settings, event, chatEnabled)) return;
         const memory = await deps.state.update(event.agent.id, (current) => ({ ...current, turns: current.turns + 1 }));
-        const decision = decideAuto({ settings, event, memory, now: now() });
+        const decision = decideAuto({ settings, event, memory, now: now(), chatEnabled });
         if (!decision.run || pending.has(event.agent.id) || lifetime.signal.aborted) return;
         clearTimeout(timers.get(event.agent.id));
         timers.set(

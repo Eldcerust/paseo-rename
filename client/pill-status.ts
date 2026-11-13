@@ -1,4 +1,5 @@
 import type { OutcomeStatus, RetitleResult } from "../shared/types";
+import type { ChatAuto } from "./chat-auto";
 import type { CommandState } from "./commands";
 
 /** How the status area of the Auto rename popover looks. Pure data, so every state can be tested without a renderer. */
@@ -42,9 +43,19 @@ function chipsOf(result: RetitleResult): PillChip[] {
 
 const failing = (chip: PillChip) => `${chip.label}: ${chip.detail ?? "failed"}`;
 
-export function describePillStatus(state: CommandState | undefined, now: number = Date.now()): PillStatus {
+const IDLE_DETAIL = "Writes a short title from the latest messages. Replaces a custom title.";
+
+/** What the idle status says: for a chat that renames itself, when that happens; otherwise what a manual rename does. */
+function idleDetail(auto: ChatAuto | undefined): string {
+  if (!auto?.enabled || !auto.allowed) return IDLE_DETAIL;
+  return auto.everyTurns === 1
+    ? "Renames after every completed turn. Leaves custom titles alone."
+    : `Renames after the next completed turn, then every ${auto.everyTurns}. Leaves custom titles alone.`;
+}
+
+export function describePillStatus(state: CommandState | undefined, now: number = Date.now(), auto?: ChatAuto): PillStatus {
   if (!state) {
-    return { tone: "idle", icon: "Sparkles", headline: "Ready to rename", detail: "Writes a short title from the latest messages. Replaces a custom title.", chips: [] };
+    return { tone: "idle", icon: "Sparkles", headline: "Ready to rename", detail: idleDetail(auto), chips: [] };
   }
   if (state.pending) {
     return { tone: "working", icon: null, headline: "Writing a title…", detail: "Reading the latest messages.", chips: [] };

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RetitleResult } from "../shared/types";
+import type { ChatAuto } from "./chat-auto";
 import type { CommandState } from "./commands";
 import { describePillStatus, relativeTime } from "./pill-status";
 
@@ -61,6 +62,25 @@ describe("describePillStatus", () => {
   });
   it("leaves the time out when the run has no timestamp", () => {
     expect(describePillStatus({ agentId: "a", pending: false, message: "x", result }, NOW).when).toBeUndefined();
+  });
+});
+
+describe("idle status for a chat's automatic renaming switch", () => {
+  const auto = (extra: Partial<ChatAuto> = {}): ChatAuto => ({ agentId: "a", enabled: true, allowed: true, everyTurns: 4, ...extra });
+  const plain = describePillStatus(undefined, NOW).detail;
+  it("says when a switched-on chat renames itself and that custom titles are left alone", () => {
+    expect(describePillStatus(undefined, NOW, auto())).toMatchObject({ tone: "idle", headline: "Ready to rename", detail: "Renames after the next completed turn, then every 4. Leaves custom titles alone." });
+    expect(describePillStatus(undefined, NOW, auto({ everyTurns: 1 })).detail).toBe("Renames after every completed turn. Leaves custom titles alone.");
+  });
+  it("keeps the plain manual text when the chat is off, the host master switch is off, or nothing is known yet", () => {
+    expect(describePillStatus(undefined, NOW, auto({ enabled: false })).detail).toBe(plain);
+    expect(describePillStatus(undefined, NOW, auto({ allowed: false })).detail).toBe(plain);
+    expect(describePillStatus(undefined, NOW, undefined).detail).toBe(plain);
+  });
+  it("ignores the switch once a run has a result, a failure, or is going", () => {
+    expect(describePillStatus(done({ result }), NOW, auto()).headline).toBe("Renamed");
+    expect(describePillStatus(done({ failed: true, message: "m" }), NOW, auto()).headline).toBe("Couldn't rename");
+    expect(describePillStatus({ agentId: "a", pending: true, message: "" }, NOW, auto()).headline).toBe("Writing a title…");
   });
 });
 

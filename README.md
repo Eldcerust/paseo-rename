@@ -1,6 +1,6 @@
 # Chat titles for Paseo
 
-Rename a chat from its recent conversation instead of leaving it named after an old first prompt. Chat titles can update the chat title and its workspace title independently, automatically after completed turns or on demand with `/retitle`.
+Rename a chat from its recent conversation instead of leaving it named after an old first prompt. Chat titles can update the chat title and its workspace title independently, automatically after completed turns in the chats you switch it on for, or on demand with `/retitle`.
 
 ## Setup
 
@@ -18,7 +18,8 @@ Open **Chat titles** in the normal plugin settings, or **Chat titles settings** 
 
 - Submit **`/retitle`**, without arguments, in the chat you want to rename. The command does not send a prompt to that chat's provider. It opens a result screen while the plugin runs a separate title helper.
 - The Command Center's **Rename this chat from recent messages** does the same thing for its current chat.
-- Click **Auto rename** in the composer. It shows this chat's current title and how the last rename went (renamed, title still fits, left unchanged, or what failed and for which target, with the time), then offers **Rename now** and **Auto-rename settings**. If Pill hub is running and merging is enabled for Auto rename, these actions appear inside its **Tools** pill instead. Turn that tool's merge switch off in Pill hub to restore its standalone pill. No Pill hub installation is required.
+- Click **Auto rename** in the composer. It shows this chat's current title and how the last rename went (renamed, title still fits, left unchanged, or what failed and for which target, with the time), then offers **Rename now**, a **Rename automatically** switch for this chat, and **Auto-rename settings**. If Pill hub is running and merging is enabled for Auto rename, these actions appear inside its **Tools** pill instead. Turn that tool's merge switch off in Pill hub to restore its standalone pill. No Pill hub installation is required.
+- **Automatic renaming is off by default for every chat.** Switch it on for a chat with **Rename automatically** in that chat's Auto rename tool (under **Tools** in Pill hub, or in its own pill). The choice is remembered for that chat only, on the host and across restarts, and each chat keeps its own. A chat that is switched on is renamed after its next completed turn, then every four completed turns (the interval is a setting). The **Allow automatic renaming** setting is the master switch: while it is off no chat renames itself and the per-chat switches are disabled. Chats that renamed themselves before this switch existed start off and must be switched on.
 - Manual renaming can replace a custom title. Automatic renaming leaves a title you chose alone. A manual title change while an automatic model request is running is protected too.
 - Results describe the chat and workspace separately. A chat rename can succeed while a workspace rename fails or is skipped. Recent outcomes retain those details.
 
@@ -77,7 +78,7 @@ Helpers are serialized in an empty shared scratch folder, use a read-only mode w
 
 On graceful plugin shutdown, new requests are refused, automatic/manual/sample generation is cancelled, and active requests are drained while helper archival is attempted. Late provider replies cannot resume a cancelled title request. Archival is best effort: an unavailable daemon, a slow agent-creation or archive operation, or a forced process kill can prevent cleanup from completing within the host's shutdown window.
 
-Host-local state records the last titles written, automatic turn counters, and up to 20 recent outcomes. Outcomes include titles, chat IDs, model IDs and failure details, not a copy of the conversation window. The provider's own helper history can still retain the prompt. There is no automatic fallback to an unrelated model when an explicit choice fails.
+Host-local state records the last titles written, automatic turn counters, which chats have automatic renaming switched on (up to 5000; beyond that a chat cannot be switched on until another is switched off), and up to 20 recent outcomes. Outcomes include titles, chat IDs, model IDs and failure details, not a copy of the conversation window. The provider's own helper history can still retain the prompt. There is no automatic fallback to an unrelated model when an explicit choice fails.
 
 Workspace titles are deliberately left alone when another live chat shares the workspace. An automatic attempt also protects a workspace title you changed after this plugin last wrote it. Renaming does not rename directories or Git branches. Duplicate requests for the same chat are rejected while a rename is in progress. Unavailable providers, authentication failures, quota errors and missing CLI routes are reported rather than treated as successful renames.
 

@@ -73,6 +73,96 @@ describe("state store", () => {
     expect((await store.recent()).map((entry) => entry.title)).toEqual(["Keep me"]);
   });
 
+  describe("per-chat automatic renaming switch", () => {
+    it("is off for every chat until it is switched on", async () => {
+      const store = createStateStore(file);
+      expect(await store.chatAuto("never-seen")).toBe(false);
+      await store.update("known", (memory) => ({ ...memory, turns: 2 }));
+      expect(await store.chatAuto("known")).toBe(false);
+    });
+
+    it("remembers each chat on its own and across a new store on the same file", async () => {
+      const store = createStateStore(file);
+      expect(await store.setChatAuto("a", true)).toBe(true);
+      const reopened = createStateStore(file);
+      expect(await reopened.chatAuto("a")).toBe(true);
+      expect(await reopened.chatAuto("b")).toBe(false);
+      expect(JSON.parse(readFileSync(file, "utf8"))).toMatchObject({ version: 1, auto: ["a"] });
+    });
+
+    it("forgets a chat that is switched off, and keeps nothing for a chat that was never on", async () => {
+      const store = createStateStore(file);
+      await store.setChatAuto("a", true); await store.setChatAuto("b", true);
+      expect(await store.setChatAuto("a", false)).toBe(false);
+      expect(await createStateStore(file).chatAuto("a")).toBe(false);
+      expect(JSON.parse(readFileSync(file, "utf8")).auto).toEqual(["b"]);
+      expect(await store.setChatAuto("never-on", false)).toBe(false);
+    });
+
+    it("is not forgotten when other chats push the per-chat memory past its limit", async () => {
+      const store = createStateStore(file, { maxAgents: 2 });
+      await store.setChatAuto("quiet", true);
+      await store.update("quiet", (memory) => ({ ...memory, turns: 1 }));
+      for (const id of ["x1", "x2", "x3"]) await store.update(id, (memory) => ({ ...memory, turns: 1 }));
+      expect((await store.get("quiet")).turns).toBe(0);
+      expect(await createStateStore(file, { maxAgents: 2 }).chatAuto("quiet")).toBe(true);
+    });
+
+    it("starts a chat fresh when it is switched on and leaves its memory alone when it is switched off", async () => {
+      const store = createStateStore(file);
+      await store.update("a", (memory) => ({ ...memory, title: "Mine", workspaceTitle: "Space", turns: 3, renamedAt: "2026-11-12T00:00:00.000Z", attemptedAt: "2026-11-13T00:00:00.000Z" }));
+      await store.setChatAuto("a", true);
+      expect(await store.get("a")).toEqual({ title: "Mine", workspaceTitle: "Space", turns: 0, renamedAt: "2026-11-12T00:00:00.000Z" });
+      await store.update("a", (memory) => ({ ...memory, turns: 2, attemptedAt: "2026-11-13T02:00:00.000Z" }));
+      await store.setChatAuto("a", false);
+      expect(await store.get("a")).toMatchObject({ turns: 2, attemptedAt: "2026-11-13T02:00:00.000Z" });
+    });
+
+    it("refuses a chat beyond the limit without forgetting another, and frees room when one is switched off", async () => {
+      const store = createStateStore(file, { maxAutoChats: 2 });
+      await store.setChatAuto("one", true); await store.setChatAuto("two", true);
+      await expect(store.setChatAuto("three", true)).rejects.toThrow("most this plugin remembers");
+      expect(await store.chatAuto("one") && await store.chatAuto("two")).toBe(true);
+      expect(await store.chatAuto("three")).toBe(false);
+      expect(await store.setChatAuto("one", true)).toBe(true);
+      await store.setChatAuto("one", false);
+      expect(await store.setChatAuto("three", true)).toBe(true);
+    });
+
+    it("changes nothing when the save fails, so the trigger never reads a switch that was not stored", async () => {
+      const blocker = join(folder, "blocker");
+      writeFileSync(blocker, "a file where a folder is needed");
+      const broken = createStateStore(join(blocker, "state.json"));
+      await expect(broken.setChatAuto("a", true)).rejects.toThrow("cannot write");
+      expect(await broken.chatAuto("a")).toBe(false);
+      // Switching off fails the same way and the chat stays on.
+      const store = createStateStore(file);
+      await store.setChatAuto("b", true);
+      const folderOfFile = join(folder, "plugin-data", "chat-title");
+      rmSync(folderOfFile, { recursive: true, force: true });
+      writeFileSync(folderOfFile, "now a file");
+      await expect(store.setChatAuto("b", false)).rejects.toThrow("cannot write");
+      expect(await store.chatAuto("b")).toBe(true);
+    });
+
+    it("keeps the valid ids of a damaged list and treats an older file with no list as everything off", async () => {
+      await createStateStore(file).update("seed", (memory) => memory);
+      writeFileSync(file, JSON.stringify({ version: 1, agents: {}, recent: [], auto: ["good", "", 7, null, "also-good"] }));
+      const store = createStateStore(file);
+      expect(await store.chatAuto("good") && await store.chatAuto("also-good")).toBe(true);
+      expect(await store.chatAuto("7")).toBe(false);
+      writeFileSync(file, JSON.stringify({ version: 1, agents: { old: { turns: 1 } }, recent: [] }));
+      expect(await createStateStore(file).chatAuto("old")).toBe(false);
+    });
+
+    it("keeps every switch when many land together", async () => {
+      const store = createStateStore(file);
+      await Promise.all(Array.from({ length: 30 }, (_, index) => store.setChatAuto(`chat-${index}`, true)));
+      const reopened = createStateStore(file);
+      expect((await Promise.all(Array.from({ length: 30 }, (_, index) => reopened.chatAuto(`chat-${index}`)))).every(Boolean)).toBe(true);
+    });
+  });
+
   it("puts the file under plugin-data in the Paseo home", () => {
     expect(statePath("C:\\paseo-home")).toBe(join("C:\\paseo-home", "plugin-data", "chat-title", "state.json"));
     expect(paseoRoot({ PASEO_HOME: " D:\\custom " })).toBe("D:\\custom");
