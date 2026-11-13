@@ -1,6 +1,7 @@
 import type { PluginAgentCommandContext, PluginClientContext } from "@getpaseo/plugin/client";
-import { retitleChat } from "../shared/rpc";
+import { retitleChat, titleJobStatus } from "../shared/rpc";
 import type { RetitleResult } from "../shared/types";
+import { observeJob } from "./jobs";
 
 export const TITLES_SCREEN = "titles";
 export const TITLES_SETTINGS = "titles";
@@ -9,11 +10,13 @@ export interface CommandState { agentId: string; pending: boolean; message: stri
 const stores = new WeakMap<object, ReturnType<typeof createCommandStore>>();
 function createCommandStore() {
   let state: CommandState | undefined;
+  const agents = new Map<string, CommandState>();
   const listeners = new Set<() => void>();
   return {
     snapshot: () => state,
+    forAgent: (id: string) => agents.get(id),
     subscribe(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; },
-    set(next: CommandState | undefined) { state = next; for (const listener of listeners) listener(); },
+    set(next: CommandState | undefined) { state = next; if (next) agents.set(next.agentId, next); else agents.clear(); for (const listener of listeners) listener(); },
   };
 }
 /** The SDK provides the same API instance to this installation's callbacks and surfaces. */
@@ -36,20 +39,20 @@ export function describeResult(result: RetitleResult): string {
 }
 
 /** A registration-local store. It cannot leak pending state across hosts or plugin reloads. */
-export function registerCommands(client: PluginClientContext) {
+export function createRenameActions(client: PluginClientContext) {
   const pending = new Set<string>();
   const store = commandStore(client.paseo);
+  const lifetime = new AbortController();
   let disposed = false;
-  async function rename(context: PluginAgentCommandContext) {
+  async function rename(id: string, rpc: PluginClientContext["rpc"] = (contract, input) => client.rpc(contract, input)) {
     if (disposed) throw new Error("Chat titles is no longer active.");
-    const id = context.agent.id;
     if (pending.has(id)) throw new Error("A rename of this chat is already running.");
     pending.add(id);
     store.set({ agentId: id, pending: true, message: "Writing a title from recent messages…" });
     try {
-      // The screen polls overview while this RPC is pending, so slash commands have visible progress.
-      context.openScreen({ screenId: TITLES_SCREEN, params: { agentId: id } });
-      const result = await context.rpc(retitleChat, { agentId: id, force: true });
+      const job = await observeJob<"retitle">(() => rpc(retitleChat, { agentId: id, force: true }), (input) => rpc(titleJobStatus, input), { signal: lifetime.signal, kind: "retitle", agentId: id });
+      if (job.state === "failed") throw new Error(job.result ? `${describeResult(job.result)} ${job.error}` : job.error);
+      const result = job.result;
       if (!disposed) store.set({ agentId: id, pending: false, message: describeResult(result) });
       if (result.status === "failed" || result.chat?.status === "failed" || result.workspace?.status === "failed") {
         throw new Error(describeResult(result));
@@ -60,6 +63,29 @@ export function registerCommands(client: PluginClientContext) {
     } finally {
       pending.delete(id);
     }
+  }
+  return {
+    rename,
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      lifetime.abort();
+      pending.clear();
+      store.set(undefined);
+    },
+  };
+}
+
+export type RenameActions = ReturnType<typeof createRenameActions>;
+
+/** Share actions with the tool popover, so slash and click cannot start duplicate jobs. */
+export function registerCommands(client: PluginClientContext, sharedActions?: RenameActions) {
+  const actions = sharedActions ?? createRenameActions(client);
+  let disposed = false;
+  async function rename(context: PluginAgentCommandContext) {
+    if (disposed) throw new Error("Chat titles is no longer active.");
+    context.openScreen({ screenId: TITLES_SCREEN, params: { agentId: context.agent.id } });
+    await actions.rename(context.agent.id, (contract, input) => context.rpc(contract, input));
   }
   const removers = [
     client.addSlashCommand({
@@ -77,7 +103,6 @@ export function registerCommands(client: PluginClientContext) {
     if (disposed) return;
     disposed = true;
     for (const remove of removers.reverse()) remove();
-    pending.clear();
-    store.set(undefined);
+    if (!sharedActions) actions.dispose();
   };
 }

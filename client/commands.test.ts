@@ -1,6 +1,6 @@
 import type { PluginAgentCommandContext, PluginClientContext, PluginClientSlashCommandContribution, PluginCommandCenterItemContribution } from "@getpaseo/plugin/client";
 import { describe, expect, it, vi } from "vitest";
-import { retitleChat } from "../shared/rpc";
+import { retitleChat, titleJobStatus } from "../shared/rpc";
 import type { RetitleResult } from "../shared/types";
 import { commandStore, describeResult, registerCommands } from "./commands";
 
@@ -15,11 +15,17 @@ function harness() {
     addCommandCenterItem: (item: PluginCommandCenterItemContribution) => { items.push(item); return removers[items.length]; },
   } as unknown as PluginClientContext;
   const cleanup = registerCommands(client);
-  const rpc = vi.fn().mockResolvedValue(result);
+  let outcome = result;
+  let agentId = "current";
+  const rpc = vi.fn(async (contract, input) => {
+    if (contract.name === retitleChat.name) { agentId = input.agentId; return { jobId: "job", kind: "retitle", agentId }; }
+    if (contract.name === titleJobStatus.name) return { found: true, job: { jobId: "job", kind: "retitle", agentId, state: "succeeded", result: { ...outcome, agentId } } };
+    throw new Error("Unexpected RPC");
+  });
   const openScreen = vi.fn(); const openSettings = vi.fn();
   const context = { context: "agent", agent: { id: "current" }, workspace: { id: "workspace" }, rpc, openScreen, openSettings, args: "" } as unknown as PluginAgentCommandContext & { args: string };
   const submit = () => { const command = slash[0]; if (command.context !== "agent") throw new Error("Wrong context"); return command.onSubmit(context); };
-  return { slash, items, cleanup, rpc, openScreen, openSettings, context, submit, removers, client };
+  return { slash, items, cleanup, rpc, openScreen, openSettings, context, submit, removers, client, result: (value: RetitleResult) => { outcome = value; } };
 }
 
 describe("chat-title client commands", () => {
@@ -56,19 +62,20 @@ describe("chat-title client commands", () => {
     const first = h.submit(); await expect(h.submit()).rejects.toThrow("already running");
     expect(commandStore(h.client.paseo).snapshot()?.pending).toBe(true);
     reject(new Error("Host disconnected")); await expect(first).rejects.toThrow("Host disconnected");
-    expect(commandStore(h.client.paseo).snapshot()).toMatchObject({ pending: false, message: "Host disconnected" });
-    await h.submit(); expect(h.rpc).toHaveBeenCalledTimes(2);
+    expect(commandStore(h.client.paseo).snapshot()).toMatchObject({ pending: false, message: expect.stringContaining("Host disconnected") });
+    expect(commandStore(h.client.paseo).snapshot()?.message).toContain("may still finish");
+    await h.submit(); expect(h.rpc).toHaveBeenCalledTimes(3);
   });
   it("makes partial failure actionable instead of reporting unqualified success", async () => {
-    const h = harness(); h.rpc.mockResolvedValue({ ...result, workspace: { status: "failed", detail: "Workspace access denied" } });
+    const h = harness(); h.result({ ...result, workspace: { status: "failed", detail: "Workspace access denied" } });
     await expect(h.submit()).rejects.toThrow("Workspace: failed (Workspace access denied)");
   });
   it("reports model failures to the host error toast", async () => {
-    const h = harness(); h.rpc.mockResolvedValue({ ...result, status: "failed", reason: "Provider quota exhausted" });
+    const h = harness(); h.result({ ...result, status: "failed", reason: "Provider quota exhausted" });
     await expect(h.submit()).rejects.toThrow("Provider quota exhausted");
   });
   it.each(["unchanged", "skipped"] as const)("keeps a %s outcome understandable", async (status) => {
-    const h = harness(); h.rpc.mockResolvedValue({ ...result, status, reason: "No new topic" });
+    const h = harness(); h.result({ ...result, status, reason: "No new topic" });
     await h.submit(); expect(describeResult({ ...result, status, reason: "No new topic" })).toContain("No new topic");
   });
   it("removes all registrations once and rejects retained handlers after teardown", async () => {

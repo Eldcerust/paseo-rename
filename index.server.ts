@@ -1,9 +1,10 @@
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import { chatTitleSettings } from "./shared/settings";
-import { retitleChat, titleModels, titleOverview, titleProviders, titleTest } from "./shared/rpc";
+import { retitleChat, titleJobStatus, titleModels, titleOverview, titleProviders, titleTest } from "./shared/rpc";
 import { createAuto } from "./server/auto";
 import { createRetitler } from "./server/retitle";
 import { createStateStore, statePath } from "./server/state";
+import { createJobs } from "./server/jobs";
 
 export default function contribute(server: PluginServerContext) {
   const document = server.registerSettings(chatTitleSettings);
@@ -15,7 +16,7 @@ export default function contribute(server: PluginServerContext) {
   const state = createStateStore(statePath());
   const retitler = createRetitler({ settings, state });
   const auto = createAuto({ settings, state, retitler });
-  const lifetime = new AbortController();
+  const jobs = createJobs();
   const active = new Set<Promise<unknown>>();
   let disposed = false;
   let cleanup: Promise<void> | undefined;
@@ -27,11 +28,12 @@ export default function contribute(server: PluginServerContext) {
     request.then(() => active.delete(request), () => active.delete(request));
     return request;
   }
-  server.handle(retitleChat, (input, { paseo }) => admit(() => retitler.retitle(paseo, { ...input, source: "manual", signal: lifetime.signal })));
+  server.handle(retitleChat, (input, { paseo }) => admit(async () => jobs.startRetitle(input.agentId, (signal) => retitler.retitle(paseo, { ...input, source: "manual", signal }))));
   server.handle(titleOverview, (_input, { paseo }) => admit(() => retitler.overview(paseo)));
   server.handle(titleProviders, (_input, { paseo }) => admit(async () => ({ providers: await retitler.catalog(paseo).providers() })));
   server.handle(titleModels, ({ provider }, { paseo }) => admit(async () => ({ models: await retitler.catalog(paseo).models(provider) })));
-  server.handle(titleTest, (_input, { paseo }) => admit(() => retitler.test(paseo, { signal: lifetime.signal })));
+  server.handle(titleTest, (_input, { paseo }) => admit(async () => jobs.startSample((signal) => retitler.test(paseo, { signal }))));
+  server.handle(titleJobStatus, ({ jobId }) => admit(async () => jobs.status(jobId)));
   const unhook = server.addHook("agent.turn.after", (event, { paseo }) => disposed ? Promise.resolve() : admit(() => auto.onTurnEnded(event, paseo)));
   // RPC registrations belong to the plugin session; Paseo removes them after this cleanup.
   return () => {
@@ -40,9 +42,9 @@ export default function contribute(server: PluginServerContext) {
     // Install the same drain promise before abort listeners can re-enter cleanup.
     cleanup = Promise.resolve().then(async () => {
       try { unhook(); }
-      finally { await Promise.all([auto.idle(), Promise.allSettled([...active])]); }
+      finally { await Promise.all([jobs.idle(), auto.idle(), Promise.allSettled([...active])]); }
     });
-    lifetime.abort();
+    jobs.stop();
     auto.stop();
     return cleanup;
   };

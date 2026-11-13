@@ -12,14 +12,27 @@ Plugins are trusted, unsandboxed code. Enable plugins on the intended daemon onl
 paseo plugin install /absolute/path/to/paseo-chat-title
 ```
 
-Open **Chat titles settings** from the Command Center or the plugin's settings entry. Settings belong to the selected host and are shared by that host's connected clients. Installation, reload, and live app rendering are separate from the source-level tests; they have not been verified as part of this implementation.
+Open **Chat titles** in the normal plugin settings, or **Chat titles settings** from the Command Center. Settings belong to the selected host and are shared by that host's connected clients. Source changes need a plugin reload; the source tests do not establish that the reloaded app UI or installed subprocess works.
 
 ## Use
 
 - Submit **`/retitle`**, without arguments, in the chat you want to rename. The command does not send a prompt to that chat's provider. It opens a result screen while the plugin runs a separate title helper.
 - The Command Center's **Rename this chat from recent messages** does the same thing for its current chat.
+- Click **Auto rename** in the composer for **Rename now** and **Auto-rename settings**. If Pill hub is running and merging is enabled for Auto rename, these actions appear inside its **Tools** pill instead. Turn that tool's merge switch off in Pill hub to restore its standalone pill. No Pill hub installation is required.
 - Manual renaming can replace a custom title. Automatic renaming leaves a title you chose alone. A manual title change while an automatic model request is running is protected too.
 - Results describe the chat and workspace separately. A chat rename can succeed while a workspace rename fails or is skipped. Recent outcomes retain those details.
+
+Pill hub v1 uses an app-wide bus, not host-qualified tool discovery. On a single host, merge/fallback follows its switch normally. With multiple connected hosts, install Pill hub on each host using Chat titles and keep their Auto rename merge choices aligned. A hub running only on another host can otherwise absorb the tool without displaying it locally. Turning Auto rename merging off in all active hubs restores the standalone tool. Normal Chat titles settings, `/retitle`, and Command Center actions remain available regardless. This plugin does not change the other plugin's protocol or settings.
+
+### Background jobs and progress
+
+Manual renames and saved-model samples return a job acknowledgement immediately, then the client polls that job until its real result or error arrives. Acknowledgement is not success. This avoids holding a plugin RPC open during generation, which may exceed Paseo's 30-second RPC deadline. The helper's model timeout and your selected model are unchanged.
+
+The host serializes manual/sample jobs, permits up to 20 pending jobs, and keeps up to 100 job records for 15 minutes after completion. It refuses new jobs if those bounds are full rather than evicting an active job or a still-retained error. Automatic renaming keeps its existing trigger path and shares the serialized helper runner. Job records are in memory and do not survive a plugin restart; recent rename outcomes are stored separately.
+
+Closing settings stops observing its sample. Plugin client cleanup stops command/tool polling. This does not cancel an already-acknowledged host job: it may still finish, so check **Recent outcomes** before retrying after a disconnect, lost job, or observation timeout. Polling backs off from half a second to 2.5 seconds and stops after 35 minutes. Graceful host shutdown instead cancels and drains its jobs. Sample results are not rename outcomes; an expired or restarted sample must be tested again if you still need its result.
+
+For integrations, `chat-title.retitle` returns `{kind: "retitle", jobId, agentId}` and `chat-title.test` returns `{kind: "sample", jobId}`. `chat-title.job-status` accepts `{jobId}` and returns either `{found: true, job}` with queued/running/succeeded/failed state and terminal result/error, or `{found: false, jobId, error}` for a missing job. These replace the earlier synchronous RPC outputs; internal retitler results and saved settings are unchanged.
 
 ## Provider and model
 

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { modelsFor, providersOf } from "../client/model-pick";
 import { boundedInteger, settingsWithModel } from "../client/settings-values";
 import { createCatalog, agentProviderOf, type CatalogSource } from "../server/catalog";
-import { retitleChat, titleModels, titleOverview, titleProviders, titleTest } from "./rpc";
+import { retitleChat, titleJobStatus, titleModels, titleOverview, titleProviders, titleTest } from "./rpc";
 import { chatTitleSettings } from "./settings";
 
 const prefixed = [{ id: "openai/title-small", label: "Title Small" }, { id: "anthropic/title-fast", label: "Title Fast" }];
@@ -53,11 +53,16 @@ describe("joined client/settings/server surfaces", () => {
   it("round-trips every real RPC through its input and output contract", () => {
     const outcome = { agentId: "a", status: "renamed", title: "Archive workspace", previous: null, chat: { status: "renamed" }, workspace: { status: "skipped", detail: "Shared workspace" }, model: "claude/claude-haiku-5-5", messages: 10, at: "2026-11-13T00:00:00Z" };
     const roundtrip = (schema: { parse(value: unknown): unknown }, value: unknown) => expect(schema.parse(JSON.parse(JSON.stringify(value)))).toEqual(value);
-    roundtrip(retitleChat.input, { agentId: "a", force: true }); roundtrip(retitleChat.output, outcome);
+    const ack = { jobId: "retitle-request", kind: "retitle", agentId: "a" };
+    roundtrip(retitleChat.input, { agentId: "a", force: true }); roundtrip(retitleChat.output, ack);
+    roundtrip(titleJobStatus.input, { jobId: ack.jobId });
+    roundtrip(titleJobStatus.output, { found: true, job: { ...ack, state: "succeeded", createdAt: outcome.at, updatedAt: outcome.at, expiresAt: outcome.at, result: outcome } });
     roundtrip(titleOverview.input, {}); roundtrip(titleOverview.output, { recent: [outcome], busy: ["a"], defaultModel: "claude/claude-haiku-5-5" });
     roundtrip(titleProviders.input, {}); roundtrip(titleProviders.output, { providers: [{ id: "claude", label: "Claude", available: true }, { id: "disabled", label: "Disabled", available: false, error: "Not installed" }] });
     roundtrip(titleModels.input, { provider: "opencode" }); roundtrip(titleModels.output, { models: prefixed });
-    roundtrip(titleTest.input, {}); roundtrip(titleTest.output, { title: "Archive workspace", model: "claude/claude-haiku-5-5", ms: 120 });
+    const sample = { jobId: "sample-request", kind: "sample" };
+    roundtrip(titleTest.input, {}); roundtrip(titleTest.output, sample);
+    roundtrip(titleJobStatus.output, { found: true, job: { ...sample, state: "succeeded", createdAt: outcome.at, updatedAt: outcome.at, expiresAt: outcome.at, result: { title: "Archive workspace", model: "claude/claude-haiku-5-5", ms: 120 } } });
     expect(retitleChat.input.safeParse({ agentId: "" }).success).toBe(false);
     expect(titleTest.output.safeParse({ title: "Title", model: "x", ms: -1 }).success).toBe(false);
   });
@@ -71,7 +76,7 @@ describe("joined client/settings/server surfaces", () => {
     };
     const cleanup = contribute(server as never);
     expect(server.registerSettings).toHaveBeenCalledWith(chatTitleSettings);
-    expect([...handlers.keys()].sort()).toEqual([retitleChat, titleOverview, titleProviders, titleModels, titleTest].map((rpc) => rpc.name).sort());
+    expect([...handlers.keys()].sort()).toEqual([retitleChat, titleJobStatus, titleOverview, titleProviders, titleModels, titleTest].map((rpc) => rpc.name).sort());
     expect(server.addHook).toHaveBeenCalledWith("agent.turn.after", expect.any(Function));
     const providers = titleProviders.output.parse(await handlers.get(titleProviders.name)({}, { paseo: source }));
     expect(providers.providers.map((p) => p.id)).toContain("claude");

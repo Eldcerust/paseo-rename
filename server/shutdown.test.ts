@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PluginServerContext } from "@getpaseo/plugin/server";
 import contribute from "../index.server";
 import { settingsFallback } from "../shared/settings";
-import { retitleChat, titleTest } from "../shared/rpc";
+import { retitleChat, titleJobStatus, titleTest } from "../shared/rpc";
+import { createStateStore, statePath } from "./state";
 import { DEBOUNCE_MS, type TurnEvent } from "./auto";
 import { renameAgentWithCli } from "./cli";
 import type { HelperAgent } from "./llm";
@@ -71,21 +72,27 @@ function setup() {
     addHook: (_name: string, handler: typeof hook) => { hook = handler; return unhook; },
   };
   const cleanup = contribute(server as unknown as PluginServerContext);
-  return { daemon, handlers, hook, cleanup, waiting, finish, archiveStarted, archiveGate, archivedAgents, archivedWorkspaces, create, setWorkspaceTitle, unhook };
+  // Disposal closes RPC admission, so read the real persisted cancellation outcome after drain.
+  const recent = () => createStateStore(statePath(folder)).recent();
+  return { daemon, handlers, hook, cleanup, waiting, finish, archiveStarted, archiveGate, archivedAgents, archivedWorkspaces, create, setWorkspaceTitle, unhook, recent };
 }
 
 describe("graceful shutdown through the real services", () => {
   it("drains an active manual helper and a queued sample together without creating a second helper after disposal", async () => {
     const w = setup();
-    const manual = w.handlers.get(retitleChat.name)!({ agentId: "target", force: true }, { paseo: w.daemon });
+    const manual = await w.handlers.get(retitleChat.name)!({ agentId: "target", force: true }, { paseo: w.daemon });
     await w.waiting.promise;
-    const sample = w.handlers.get(titleTest.name)!({}, { paseo: w.daemon }).catch((error: Error) => error);
+    const sample = await w.handlers.get(titleTest.name)!({}, { paseo: w.daemon });
+    expect(manual).toMatchObject({ kind: "retitle", agentId: "target", jobId: expect.any(String) });
+    expect(sample).toMatchObject({ kind: "sample", jobId: expect.any(String) });
+    expect(sample.jobId).not.toBe(manual.jobId);
+    expect(await w.handlers.get(titleJobStatus.name)!({ jobId: sample.jobId }, { paseo: w.daemon })).toMatchObject({ job: { state: "queued" } });
     await new Promise((resolve) => setImmediate(resolve));
     const cleanup = w.cleanup(); await w.archiveStarted.promise;
     expect(w.create).toHaveBeenCalledTimes(1);
     w.archiveGate.resolve(); await cleanup;
-    expect(await manual).toMatchObject({ status: "skipped", reason: "The rename was cancelled." });
-    expect(await sample).toMatchObject({ message: "The rename was cancelled." });
+    expect(await w.recent()).toContainEqual(expect.objectContaining({ agentId: "target", status: "skipped", reason: "The rename was cancelled." }));
+    await expect(w.handlers.get(titleJobStatus.name)!({ jobId: sample.jobId }, { paseo: w.daemon })).rejects.toThrow("stopping");
     expect(w.create).toHaveBeenCalledTimes(1);
     expect(w.archivedAgents).toEqual(["owned-helper"]); expect(w.archivedWorkspaces).toEqual(["owned-helper-workspace"]);
     w.finish.resolve({ status: "idle", lastMessage: "Ignored after cleanup" });
@@ -99,13 +106,14 @@ describe("graceful shutdown through the real services", () => {
     ["auto", "resolve"], ["auto", "reject"],
   ] as const)("cancels and drains %s, then safely observes a late provider %s without a title write", async (path, late) => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-    const w = setup(); let request: Promise<any> | undefined;
+    const w = setup(); let acknowledgement: any;
     if (path === "auto") {
       await w.hook({ agent: { id: "target", workspaceId: "target-workspace", parentAgentId: null, cwd: "C:/test-target", title: null }, outcome: { kind: "completed" } }, { paseo: w.daemon });
       await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
     } else {
       const contract = path === "manual" ? retitleChat : titleTest;
-      request = w.handlers.get(contract.name)!(path === "manual" ? { agentId: "target", force: true } : {}, { paseo: w.daemon }).catch((error: Error) => error);
+      acknowledgement = await w.handlers.get(contract.name)!(path === "manual" ? { agentId: "target", force: true } : {}, { paseo: w.daemon });
+      expect(acknowledgement).toMatchObject({ kind: path === "manual" ? "retitle" : "sample", jobId: expect.any(String) });
     }
     await w.waiting.promise;
     let exited = false; const drain = w.cleanup(); expect(w.cleanup()).toBe(drain);
@@ -113,8 +121,8 @@ describe("graceful shutdown through the real services", () => {
     await w.archiveStarted.promise; await new Promise((resolve) => setImmediate(resolve));
     expect(exited, "Cleanup cannot exit while helper archival is pending").toBe(false);
     w.archiveGate.resolve(); await stopped;
-    if (path === "manual") expect(await request).toMatchObject({ status: "skipped", reason: "The rename was cancelled." });
-    if (path === "sample") expect(await request).toMatchObject({ message: "The rename was cancelled." });
+    if (path === "manual") expect(await w.recent()).toContainEqual(expect.objectContaining({ agentId: "target", status: "skipped", reason: "The rename was cancelled." }));
+    if (acknowledgement) await expect(w.handlers.get(titleJobStatus.name)!({ jobId: acknowledgement.jobId }, { paseo: w.daemon })).rejects.toThrow("stopping");
     expect(w.archivedAgents).toEqual(["owned-helper"]); expect(w.archivedWorkspaces).toEqual(["owned-helper-workspace"]);
     expect(w.unhook).toHaveBeenCalledTimes(1);
     if (late === "resolve") w.finish.resolve({ status: "idle", lastMessage: "This late title must not be applied" });

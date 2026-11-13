@@ -4,12 +4,13 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Pressable, Text, View } from "react-native";
 import { chatTitleSettings, modelDefaults, WINDOW_MIN, WINDOW_MAX, CHARS_MIN, CHARS_MAX, EVERY_TURNS_MIN, EVERY_TURNS_MAX, type ChatTitleValues } from "../shared/settings";
-import { titleModels, titleOverview, titleProviders, titleTest } from "../shared/rpc";
+import { titleJobStatus, titleModels, titleOverview, titleProviders, titleTest } from "../shared/rpc";
 import { commandStore, describeResult } from "./commands";
 import { HostLookProvider } from "./host-look";
 import { ModelPicker } from "./model-picker";
 import { ProviderPicker } from "./provider-picker";
 import { boundedInteger, settingsWithModel } from "./settings-values";
+import { observeJob } from "./jobs";
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 
@@ -40,20 +41,41 @@ export function TitleScreen(props: PluginScreenProps) {
 
 function TitleControls({ theme, layout, host, agentId }: PluginSurfaceProps & { agentId?: string }) {
   const store = commandStore(usePaseo());
-  const command = useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot);
+  const command = useSyncExternalStore(store.subscribe, () => agentId ? store.forAgent(agentId) : store.snapshot(), () => agentId ? store.forAgent(agentId) : store.snapshot());
   const settings = useSettings(chatTitleSettings);
   const getProviders = useRpc(titleProviders);
   const getModels = useRpc(titleModels);
   const getOverview = useRpc(titleOverview);
   const testModel = useRpc(titleTest);
+  const getJob = useRpc(titleJobStatus);
+  const sampleRun = useRef<AbortController | null>(null);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; sampleRun.current?.abort(); sampleRun.current = null; };
+  }, []);
   const providers = useQuery({ queryKey: ["chat-title", host.id, "providers"], queryFn: () => getProviders({}) });
   const overview = useQuery({ queryKey: ["chat-title", host.id, "overview"], queryFn: () => getOverview({}), refetchInterval: 2500 });
   // Browsing a provider does not write settings. Only selecting a complete model commits a choice.
   const [browsing, setBrowsing] = useState<string | undefined>();
   const provider = browsing ?? (settings.status === "ready" ? settings.values.model.provider : "");
   const models = useQuery({ queryKey: ["chat-title", host.id, "models", provider], queryFn: () => getModels({ provider }), enabled: Boolean(provider) });
-  const sample = useMutation({ mutationFn: () => testModel({}), onSettled: () => { void overview.refetch(); } });
+  const sample = useMutation({ mutationFn: async (controller: AbortController) => {
+    if (!mounted.current || sampleRun.current !== controller || controller.signal.aborted) throw new Error("Chat titles settings is no longer open. The model test was not started.");
+    try {
+      const job = await observeJob<"sample">(() => testModel({}), getJob, { signal: controller.signal, kind: "sample" });
+      if (job.state === "failed") throw new Error(job.error.replace(/Check Recent outcomes before retrying\./i, "Wait for pending jobs to finish before testing the model again."));
+      return job.result;
+    } finally { if (sampleRun.current === controller) sampleRun.current = null; }
+  } });
   const saving = useRef(false);
+  function beginSample() {
+    if (!mounted.current || sampleRun.current || saving.current || settings.status !== "ready" || settings.saving) return;
+    // Claim synchronously at the click, before TanStack schedules mutationFn or React re-renders.
+    const controller = new AbortController();
+    sampleRun.current = controller;
+    sample.mutate(controller);
+  }
   const c = theme.colors;
   const text = { color: c.foreground };
   const muted = { color: c.foregroundMuted, fontSize: 13 };
@@ -61,7 +83,7 @@ function TitleControls({ theme, layout, host, agentId }: PluginSurfaceProps & { 
   useEffect(() => { setBrowsing(undefined); sample.reset(); }, [host.id]);
 
   async function save(next: ChatTitleValues) {
-    if (settings.status !== "ready" || settings.saving || saving.current || sample.isPending) return false;
+    if (settings.status !== "ready" || settings.saving || saving.current || sampleRun.current || sample.isPending) return false;
     saving.current = true;
     try {
       const saved = await settings.save(next, settings.revision);
@@ -95,7 +117,7 @@ function TitleControls({ theme, layout, host, agentId }: PluginSurfaceProps & { 
       <SettingsAction label="Use built-in model preference" hint="Tries available preferred models, not an arbitrary catalog entry." actionLabel="Reset model" disabled={disabled || !values.model.provider} onPress={() => void save({ ...values, model: { ...modelDefaults } })} />
       {providers.isPending ? <SettingsRow label="Loading providers…" /> : providers.isError ? <SettingsAction label="Could not load providers" hint={errorText(providers.error)} actionLabel="Retry" onPress={() => void providers.refetch()} /> : <ProviderPicker providers={providers.data.providers} value={provider} disabled={disabled} onSelect={setBrowsing} />}
       {provider ? models.isPending ? <SettingsRow label="Loading models…" /> : models.isError ? <SettingsAction label="Could not load models" hint={errorText(models.error)} actionLabel="Retry" onPress={() => void models.refetch()} /> : <ModelPicker key={provider} all={models.data?.models ?? []} value={values.model.provider === provider ? values.model.model : ""} disabled={disabled || selectedProvider?.available !== true} onSelect={(model) => void save(settingsWithModel(values, provider, model))} /> : <SettingsRow label="Choose an agent provider to browse its models" hint="Browsing does not change the saved choice. Select a model to save the provider and model together." />}
-      <SettingsAction label="Test saved model" hint="One helper run with a fixed sample conversation; does not rename any chat." actionLabel={sample.isPending ? "Testing…" : "Generate sample title"} disabled={disabled} onPress={() => sample.mutate()} />
+      <SettingsAction label="Test saved model" hint="One helper run with a fixed sample conversation; does not rename any chat." actionLabel={sample.isPending ? "Testing…" : "Generate sample title"} disabled={disabled} onPress={beginSample} />
       {sample.isError ? <SettingsRow label="Model test failed" error={errorText(sample.error)} /> : null}
       {sample.data ? <SettingsRow label={sample.data.title} hint={`${sample.data.model} · ${(sample.data.ms / 1000).toFixed(1)} s`} /> : null}
     </SettingsCard></SettingsSection>

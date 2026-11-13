@@ -1,12 +1,13 @@
 ﻿import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 import { retitleResultSchema } from "./types";
+import { jobStatusSchema, retitleJobAckSchema, sampleJobAckSchema } from "./jobs";
 
-/** Retitles one chat now. `force` is for a person asking; it renames even a title they chose. */
+/** Starts an owned background retitle. The acknowledgement is not its generated result. */
 export const retitleChat = defineRpc({
   name: "chat-title.retitle",
   input: z.object({ agentId: z.string().min(1), force: z.boolean().optional() }),
-  output: retitleResultSchema,
+  output: retitleJobAckSchema,
 });
 
 /** The most recent results and the chats being retitled right now, for the settings screen. */
@@ -37,9 +38,15 @@ export const titleModels = defineRpc({
   output: z.object({ models: z.array(z.object({ id: z.string(), label: z.string() })) }),
 });
 
-/** Writes a title for a fixed sample chat with the chosen model, so a choice can be tried without touching a chat. */
+/** Starts a sample job without holding a plugin RPC open during model generation. */
 export const titleTest = defineRpc({
   name: "chat-title.test",
   input: z.object({}),
-  output: z.object({ title: z.string(), model: z.string(), ms: z.number().int().nonnegative() }),
+  output: sampleJobAckSchema,
+});
+
+export const titleJobStatus = defineRpc({
+  name: "chat-title.job-status",
+  input: z.object({ jobId: z.string().min(1).max(200) }),
+  output: jobStatusSchema,
 });
