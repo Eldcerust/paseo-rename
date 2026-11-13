@@ -44,6 +44,8 @@ interface Options {
   projectReply?: string;
   chats?: { id: string; title?: string | null }[];
   runFails?: string;
+  projectFails?: string;
+  cliFails?: boolean;
   refreshFails?: boolean;
   hold?: Promise<void>;
   helperNotice?: string;
@@ -117,6 +119,7 @@ function world(options: Options = {}) {
     state: store,
     setChatTitle: async (_id, title) => {
       calls.cli.push(title);
+      if (options.cliFails) throw new Error("The Paseo command failed: agent not found");
       state.chat = title;
     },
     scratchRoot: folder,
@@ -125,7 +128,10 @@ function world(options: Options = {}) {
       options.modelStarted?.();
       await options.hold;
       if (options.runFails) throw new Error(options.runFails);
-      if (prompt.startsWith("You name projects")) return options.projectReply ?? "Shared project name";
+      if (prompt.startsWith("You name projects")) {
+        if (options.projectFails) throw new Error(options.projectFails);
+        return options.projectReply ?? "Shared project name";
+      }
       return options.reply ?? NEW_TITLE;
     },
     now: () => new Date("2026-11-13T05:00:00.000Z"),
@@ -212,6 +218,26 @@ describe("retitle", () => {
     expect(w.calls.models).toHaveLength(2);
     expect(w.calls.models[1]?.prompt).toContain("You name projects");
     expect(w.calls.models[1]?.prompt).toContain('title: "Beta"');
+    expect(await w.store.workspace(WORKSPACE)).toMatchObject({ title: "Shared project work" });
+  });
+
+  it("keeps a renamed chat when the project summary fails", async () => {
+    const w = world({ chats: [{ id: AGENT, title: "Alpha" }, { id: "b", title: "Beta" }], projectFails: "project model down" });
+    const result = await w.retitler.retitle(w.daemon, { agentId: AGENT, source: "manual" });
+    expect(result.chat).toEqual({ status: "renamed" });
+    expect(result.workspace).toEqual({ status: "failed", detail: "project model down" });
+    expect(result.status).toBe("renamed");
+    expect(w.state.chat).toBe(NEW_TITLE);
+    expect(await w.store.workspace(WORKSPACE)).toBeUndefined();
+  });
+
+  it("still names the project when the chat command fails", async () => {
+    const w = world({ chats: [{ id: AGENT, title: "Alpha" }, { id: "b", title: "Beta" }], cliFails: true, projectReply: "Shared project work" });
+    const result = await w.retitler.retitle(w.daemon, { agentId: AGENT, source: "manual" });
+    expect(result.chat).toEqual({ status: "failed", detail: "The Paseo command failed: agent not found" });
+    expect(result.workspace).toEqual({ status: "renamed", detail: "Named from 2 live chats." });
+    expect(result.status).toBe("renamed");
+    expect(w.state.workspace).toBe("Shared project work");
     expect(await w.store.workspace(WORKSPACE)).toMatchObject({ title: "Shared project work" });
   });
 
