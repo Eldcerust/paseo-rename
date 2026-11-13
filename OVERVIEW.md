@@ -4,7 +4,7 @@ The default window is the last 10 conversational messages, capped at 600 charact
 
 ## Setup and model choice
 
-Requires Paseo 0.15.4 or later on the daemon and app, a configured agent provider, and the Paseo CLI on the daemon machine. Open Chat titles settings to choose any available daemon provider and search its models. Prefix-based model catalogs have a sub-provider column like Pill hub; flat catalogs do not. Unavailable providers show their reported reason. Choosing a model saves both provider and model together for the selected host.
+Requires Paseo 0.15.4 or later on the daemon and app, a configured agent provider, and the Paseo CLI on the daemon machine. Click Rename Chat Title in the sidebar to open Chat titles settings directly. There you can choose an available daemon provider and search its models. The same settings remain available through plugin settings and the Command Center. Prefix-based model catalogs have a sub-provider column like Pill hub; flat catalogs do not. Unavailable providers show their reported reason. Choosing a model saves both provider and model together for the selected host.
 
 The normal Chat titles settings entry controls the master switch for automatic renaming, its interval, recent-message window, targets and model. The clickable Auto rename composer tool shows this chat's current title and the outcome of the last rename, and offers Rename now, a Rename automatically switch for this chat, and Auto-rename settings. With Pill hub installed and its merge switch on, the same tool appears inside Tools; otherwise it has its own pill. Settings always open in Chat titles, even from inside Tools.
 

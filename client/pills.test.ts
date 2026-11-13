@@ -6,7 +6,7 @@ import { contributePills } from "./pills";
 import { createRenameActions } from "./commands";
 
 vi.mock("react-native", () => ({ ActivityIndicator: "ActivityIndicator", Pressable: "Pressable", Text: "Text", View: "View" }));
-vi.mock("@getpaseo/plugin/client/ui", () => ({ Icon: "Icon" }));
+vi.mock("@getpaseo/plugin/client/ui", () => ({ Icon: "Icon", SidebarRow: "SidebarRow" }));
 vi.mock("react", async (original) => ({ ...await original<typeof import("react")>(), useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) => snapshot() }));
 vi.mock("@tanstack/react-query", () => ({
   useMutation: ({ mutationFn }: { mutationFn: () => unknown }) => ({ mutate: mutationFn, isPending: false, isError: false }),
@@ -24,7 +24,7 @@ beforeEach(resetBus);
 afterEach(() => { resetBus(); vi.useRealTimers(); vi.restoreAllMocks(); });
 const agent = (id: string, extra: object = {}) => ({ id, workspaceId: "w", title: "A real chat", labels: {}, ...extra });
 function harness(deferred = false) {
-  const own: any[] = []; const settings: any[] = [];
+  const own: any[] = []; const settings: any[] = []; const sidebar: any[] = [];
   let observer: any; let signal!: AbortSignal; let resolve!: (result: any) => void;
   const unsubscribe = vi.fn();
   const subscription = { subscribe: vi.fn((value) => { observer = value; return unsubscribe; }) };
@@ -34,11 +34,12 @@ function harness(deferred = false) {
     rpc, openSettings: vi.fn(), openScreen: vi.fn(),
     addComposerPill: vi.fn((spec) => { const registration = { update: vi.fn(), remove: vi.fn() }; own.push({ ...spec, registration }); return registration; }),
     addSettingsScreen: vi.fn((spec) => { settings.push(spec); return vi.fn(); }),
+    addSidebarFooterItem: vi.fn((spec) => { const remove = vi.fn(); sidebar.push({ ...spec, remove }); return remove; }),
     addScreen: vi.fn(() => vi.fn()), addSlashCommand: vi.fn(() => vi.fn()), addCommandCenterItem: vi.fn(() => vi.fn()),
   } as unknown as PluginClientContext;
   const actions = createRenameActions(client);
   return {
-    client, actions, own, settings, rpc, subscription, unsubscribe,
+    client, actions, own, settings, sidebar, rpc, subscription, unsubscribe,
     snapshot: (agents: any[], pageInfo = { hasMore: false, nextCursor: null as string | null }) => observer.snapshot({ entries: agents.map((a) => ({ agent: a })), pageInfo }),
     upsert: (a: any) => observer.update({ type: "agent_update", payload: { kind: "upsert", agent: a } }),
     remove: (id: string) => observer.update({ type: "agent_update", payload: { kind: "remove", agentId: id } }),
@@ -65,6 +66,33 @@ describe("Auto rename settings and composer tool", () => {
     expect(h.settings).toMatchObject([{ id: "titles", title: "Chat titles", Component: expect.any(Function) }]);
     h.snapshot([agent("a")]); expect(h.own).toHaveLength(1);
     cleanup(); cleanup(); expect(h.own[0].registration.remove).toHaveBeenCalledTimes(1); expect(h.signal().aborted).toBe(true);
+  });
+  it("adds a native sidebar shortcut that opens configuration directly on wide and compact layouts", async () => {
+    const h = harness(); const cleanup = contribute(h.client); await tick();
+    expect(h.sidebar).toHaveLength(1);
+    expect(h.sidebar[0]).toMatchObject({ id: "settings", title: "Rename Chat Title" });
+    for (const compact of [false, true]) {
+      const row = h.sidebar[0].Component({ ...props, layout: { compact } }) as React.ReactElement<{ label: string; icon: string; onPress(): void }>;
+      expect(row.type).toBe("SidebarRow");
+      expect(row.props).toMatchObject({ label: "Rename Chat Title", icon: "CaseSensitive" });
+      row.props.onPress();
+    }
+    expect(h.client.openSettings).toHaveBeenCalledTimes(2);
+    expect(h.client.openSettings).toHaveBeenCalledWith("titles");
+    expect(h.client.openScreen).not.toHaveBeenCalled();
+    expect(h.rpc).not.toHaveBeenCalled();
+    cleanup(); cleanup(); expect(h.sidebar[0].remove).toHaveBeenCalledOnce();
+  });
+  it("keeps sidebar settings navigation scoped to the installation that owns the row", async () => {
+    const first = harness(); const second = harness();
+    const stopFirst = contribute(first.client); const stopSecond = contribute(second.client); await tick();
+    expect(first.sidebar).toHaveLength(1); expect(second.sidebar).toHaveLength(1);
+    const row = second.sidebar[0].Component(props) as React.ReactElement<{ onPress(): void }>;
+    row.props.onPress();
+    expect(second.client.openSettings).toHaveBeenCalledWith("titles");
+    expect(first.client.openSettings).not.toHaveBeenCalled();
+    stopFirst(); stopSecond();
+    expect(first.sidebar[0].remove).toHaveBeenCalledOnce(); expect(second.sidebar[0].remove).toHaveBeenCalledOnce();
   });
   it("registers a clickable standalone Auto rename popover when the hub is absent", async () => {
     const h = harness(); const stop = contributePills(h.client, h.actions); await tick(); h.snapshot([agent("a")]);
