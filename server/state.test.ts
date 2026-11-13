@@ -163,6 +163,65 @@ describe("state store", () => {
     });
   });
 
+  describe("per-workspace project title memory", () => {
+    it("round-trips a workspace title through the file", async () => {
+      const store = createStateStore(file);
+      await store.setWorkspace("wks-1", "Shared release work", "2026-11-13T05:00:00.000Z");
+      expect(await store.workspace("wks-1")).toEqual({ title: "Shared release work", at: "2026-11-13T05:00:00.000Z" });
+      expect(await createStateStore(file).workspace("wks-1")).toEqual({ title: "Shared release work", at: "2026-11-13T05:00:00.000Z" });
+      expect(await store.workspace("wks-2")).toBeUndefined();
+    });
+
+    it("loads an old file with no workspace map and treats its workspaces as unknown", async () => {
+      await createStateStore(file).update("seed", (memory) => memory);
+      writeFileSync(file, JSON.stringify({ version: 1, agents: { a: { turns: 1 } }, recent: [], auto: [] }));
+      const store = createStateStore(file);
+      expect(await store.workspace("wks-1")).toBeUndefined();
+      await store.setWorkspace("wks-1", "New name");
+      expect(await createStateStore(file).workspace("wks-1")).toEqual({ title: "New name" });
+    });
+
+    it("keeps valid workspace records and ignores malformed ones", async () => {
+      await createStateStore(file).update("seed", (memory) => memory);
+      writeFileSync(file, JSON.stringify({
+        version: 1,
+        agents: {},
+        recent: [],
+        auto: [],
+        workspaces: { good: { title: "Keep me", at: "2026-11-13T05:00:00.000Z" }, number: { title: 42 }, blank: { title: "   " }, odd: "text", "": { title: "No id" } },
+      }));
+      const store = createStateStore(file);
+      expect(await store.workspace("good")).toEqual({ title: "Keep me", at: "2026-11-13T05:00:00.000Z" });
+      expect(await store.workspace("number")).toBeUndefined();
+      expect(await store.workspace("blank")).toBeUndefined();
+      expect(await store.workspace("odd")).toBeUndefined();
+      expect(await store.workspace("")).toBeUndefined();
+    });
+
+    it("forgets the workspace used longest ago and refreshes recency on write", async () => {
+      const store = createStateStore(file, { maxWorkspaces: 2 });
+      await store.setWorkspace("old", "Old");
+      await store.setWorkspace("middle", "Middle");
+      await store.setWorkspace("old", "Old again");
+      await store.setWorkspace("new", "New");
+      expect(await store.workspace("middle")).toBeUndefined();
+      expect(await store.workspace("old")).toEqual({ title: "Old again" });
+      expect(await store.workspace("new")).toEqual({ title: "New" });
+    });
+
+    it("refuses an empty title without writing anything", async () => {
+      const store = createStateStore(file);
+      await expect(store.setWorkspace("wks-1", "   ")).rejects.toThrow("must not be empty");
+      expect(await store.workspace("wks-1")).toBeUndefined();
+    });
+
+    it("leaves the older per-chat workspace title readable as a seed", async () => {
+      const store = createStateStore(file);
+      await store.update("a", (memory) => ({ ...memory, workspaceTitle: "Earlier project name" }));
+      expect((await store.get("a")).workspaceTitle).toBe("Earlier project name");
+    });
+  });
+
   it("puts the file under plugin-data in the Paseo home", () => {
     expect(statePath("C:\\paseo-home")).toBe(join("C:\\paseo-home", "plugin-data", "chat-title", "state.json"));
     expect(paseoRoot({ PASEO_HOME: " D:\\custom " })).toBe("D:\\custom");

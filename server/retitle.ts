@@ -1,11 +1,13 @@
 ﻿import type { ChatTitleValues } from "../shared/settings";
 import { isAutoTitle, isUsableTitle, sanitizeTitle } from "../shared/title";
 import type { RetitleResult, RetitleSource, TargetOutcome, WindowMessage } from "../shared/types";
-import { applyTitle, type ApplyPaseo, type SetChatTitle } from "./apply";
+import { applyChatTitle, type SetChatTitle } from "./apply";
 import { agentProviderOf, createCatalog, type Catalog, type CatalogSource } from "./catalog";
 import { currentEnvironment, renameAgentWithCli, runInvocation } from "./cli";
 import { isHelperAgent, runTitleModel, type Paseo, type RunnerPaseo } from "./llm";
 import { readFirstPrompt, readWindow, type TimelinePage, type TimelineRequest } from "./messages";
+import { applyProjectTitle, type ProjectSource } from "./project-apply";
+import { createProjectTitles } from "./project-title";
 import { buildTitlePrompt } from "./prompt";
 import type { StateStore } from "./state";
 
@@ -26,8 +28,8 @@ interface AgentRef {
 /** Everything the retitle step needs of the daemon. The SDK's `paseo` is assignable to it (see `asRetitleDaemon`). */
 export interface RetitleDaemon {
   providers: CatalogSource["providers"];
-  agents: { create: RunnerPaseo["agents"]["create"]; list: ApplyPaseo["agents"]["list"]; ref(agentId: string): AgentRef };
-  workspaces: { archive: RunnerPaseo["workspaces"]["archive"]; ref: ApplyPaseo["workspaces"]["ref"] };
+  agents: { list: ProjectSource["agents"]["list"]; create: RunnerPaseo["agents"]["create"]; ref(agentId: string): AgentRef };
+  workspaces: ProjectSource["workspaces"] & { archive: RunnerPaseo["workspaces"]["archive"] };
 }
 
 export const asRetitleDaemon = (paseo: Paseo): RetitleDaemon => paseo;
@@ -78,6 +80,7 @@ export function createRetitler(deps: RetitlerDeps): Retitler {
   const runModel = deps.runModel ?? runTitleModel;
   const setChatTitle: SetChatTitle = deps.setChatTitle ?? ((agentId, title) => renameAgentWithCli(currentEnvironment(), runInvocation, agentId, title));
   const inFlight = new Set<string>();
+  const projectTitles = createProjectTitles();
   const catalogs = new WeakMap<object, Catalog>();
   const catalogFor = (paseo: RetitleDaemon) => {
     let catalog = catalogs.get(paseo);
@@ -128,20 +131,27 @@ export function createRetitler(deps: RetitlerDeps): Retitler {
     if (!latest || latest.archivedAt) return { status: "skipped", previous, ...shown, reason: "The chat was removed or archived while the model was running." };
     if (automatic && latest.title !== snapshot.title) return { status: "skipped", previous, ...shown, reason: "The chat title changed while the model was running, so it was left alone." };
 
-    // A workspace the person renamed after this plugin last wrote it is theirs: automatic renaming leaves it be.
-    let workspaceHold: string | undefined;
-    if (automatic && settings.targets.workspace && memory.workspaceTitle && snapshot.workspaceId) {
-      const current = await paseo.workspaces.ref(snapshot.workspaceId).refresh().catch(() => null);
-      const currentName = current?.title ?? current?.name;
-      if (currentName && currentName !== memory.workspaceTitle) workspaceHold = "The workspace was renamed by you, so automatic renaming leaves it alone.";
-    }
     if (cancelled()) return { status: "skipped", previous, ...shown, reason: "The rename was cancelled." };
-    const applied = await applyTitle(
+    // The chat and the project are independent: the chat is written first, then the workspace is
+    // named from every live chat in it. A failure in either never undoes the other.
+    const chat = await applyChatTitle(
       { paseo, setChatTitle },
-      { agentId, workspaceId: snapshot.workspaceId ?? null, title, currentChatTitle: previous, targets: { chat: settings.targets.chat, workspace: settings.targets.workspace && !workspaceHold }, signal: request.signal },
+      { agentId, title, currentChatTitle: previous, enabled: settings.targets.chat, signal: request.signal },
     );
-    const chat = applied.chat;
-    const workspace: TargetOutcome = workspaceHold ? { status: "skipped", detail: workspaceHold } : applied.workspace;
+    const project = await applyProjectTitle(
+      paseo,
+      {
+        settings,
+        state: deps.state,
+        titles: projectTitles,
+        runModel: (model, prompt, options) => runModel(paseo, model, prompt, options),
+        model,
+        now,
+        scratchRoot: deps.scratchRoot,
+      },
+      { agentId, chatTitle: title, workspaceId: snapshot.workspaceId ?? null, source: request.source, signal: request.signal },
+    );
+    const workspace: TargetOutcome = project.workspace;
 
     const outcomes = [chat, workspace];
     const failure = outcomes.find((outcome) => outcome.status === "failed");
@@ -153,7 +163,7 @@ export function createRetitler(deps: RetitlerDeps): Retitler {
       await deps.state.update(agentId, (current) => ({
         ...current,
         ...(chat.status === "renamed" || chat.status === "unchanged" ? { title } : {}),
-        ...(workspace.status === "renamed" || workspace.status === "unchanged" ? { workspaceTitle: title } : {}),
+        ...(workspace.status === "renamed" || workspace.status === "unchanged" ? { workspaceTitle: project.title ?? title } : {}),
         turns: request.source === "auto" ? current.turns : 0,
         renamedAt: at,
       }));

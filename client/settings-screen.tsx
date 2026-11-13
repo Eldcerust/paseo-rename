@@ -127,7 +127,7 @@ function TitleControls({ theme, layout, host, agentId }: PluginSurfaceProps & { 
     </SettingsCard></SettingsSection>
     <SettingsSection title="Rename targets"><SettingsCard>
       <SettingsSwitch label="Chat title" value={values.targets.chat} disabled={disabled} onValueChange={(chat) => void save({ ...values, targets: { ...values.targets, chat } })} />
-      <SettingsSwitch label="Workspace title" hint="Left alone when another live chat shares the workspace." value={values.targets.workspace} disabled={disabled} onValueChange={(workspace) => void save({ ...values, targets: { ...values.targets, workspace } })} />
+      <SettingsSwitch label="Workspace title" hint="Named from every live chat in the workspace; one chat uses its own title." value={values.targets.workspace} disabled={disabled} onValueChange={(workspace) => void save({ ...values, targets: { ...values.targets, workspace } })} />
     </SettingsCard></SettingsSection>
     <SettingsSection title="Automatic renaming"><SettingsCard>
       <SettingsSwitch label="Allow automatic renaming" hint="The master switch. Automatic renaming is off for every chat until you switch it on in that chat's Auto rename tool (in the composer, or under Tools); each chat keeps its own choice. A chat that is on is renamed after its next completed turn, then at the interval below, at least a minute apart. Custom titles are left alone; /retitle can replace them. While this is off, no chat renames itself." value={values.auto.enabled} disabled={disabled} onValueChange={(enabled) => void save({ ...values, auto: { ...values.auto, enabled } })} />

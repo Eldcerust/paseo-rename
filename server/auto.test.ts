@@ -19,6 +19,7 @@ function world(on: string[] = ["chat", "one", "two", "other"]) {
     get: async (id) => ({ ...(memories.get(id) ?? { turns: 0 }) }),
     update: async (id, change) => { const next = change(await state.get(id)); memories.set(id, next); return next; },
     recent: async () => [], pushResult: async () => {},
+    workspace: async () => undefined, setWorkspace: async () => {},
     chatAuto: async (id) => chats.has(id),
     setChatAuto: async (id, enabled) => { if (enabled) chats.add(id); else chats.delete(id); return enabled; },
   };

@@ -80,7 +80,7 @@ If none is available, choose a model explicitly. Availability is catalog informa
 | Messages | 10 | Last 4 to 40 conversational messages |
 | Characters per message | 600 | Cap from 200 to 4000; long text keeps 70% from the beginning and 30% from the end |
 | Chat title | On | Rename the current agent's title |
-| Workspace title | On | Rename its workspace only when no other live chat uses it |
+| Workspace title | On | Named from every live chat in the project; one live chat uses its own title. |
 | Rename automatically (per chat) | Off | Remember whether this individual chat may rename itself |
 | Allow automatic renaming (master switch) | On | Permit automatic attempts only for chats explicitly switched on |
 | Completed turns between renames | 4 | Interval from 1 to 50 completed turns |
@@ -97,9 +97,9 @@ A message is one non-empty user message, or assistant text chunks merged for one
 
 ## Privacy, cost and limits
 
-Recent message text and the current title are sent to the selected model through your daemon's provider configuration. They may include sensitive data. That provider's routing, account, retention and data policies apply; using a local daemon does not mean inference stays local.
+Recent message text and the current title are sent to the selected model through your daemon's provider configuration. A shared-project summary also sends the other live chats' titles, or their first request when they have no title, and the current project name. They may include sensitive data. That provider's routing, account, retention and data policies apply; using a local daemon does not mean inference stays local.
 
-Each rename attempt that reaches generation uses **one helper run**, even when the model keeps the title or its output cannot be used. A model test also uses one run. Provider charges or subscription quota can apply. Larger windows and shorter intervals can increase cost. The plugin does not estimate prices.
+Each rename attempt that reaches generation uses **one helper run**, or **two** when the project has two or more live chats and the workspace target is on: one for the chat title and one for the project summary. The helper run is still spent when the model keeps a title or its output cannot be used. A model test uses one run. Provider charges or subscription quota can apply. Larger windows, shorter intervals and larger projects can increase cost. The plugin does not estimate prices.
 
 Helpers are serialized in an empty shared scratch folder, use a read-only mode when the provider offers one, request text-only replies, and deny permission requests. Helpers and their workspaces are archived after a run. These measures are not a sandbox: providers and installed hooks still run under your daemon account. The scratch folder is reused rather than repeatedly created and deleted because provider processes can keep directory handles open.
 
@@ -109,7 +109,7 @@ On graceful plugin shutdown, new requests are refused, automatic/manual/sample g
 
 Host-local state records the last titles written, automatic turn counters, which chats have automatic renaming switched on (up to 5000; beyond that a chat cannot be switched on until another is switched off), and up to 20 recent outcomes. Outcomes include titles, chat IDs, model IDs and failure details, not a copy of the conversation window. The provider's own helper history can still retain the prompt. There is no automatic fallback to an unrelated model when an explicit choice fails.
 
-Workspace titles are deliberately left alone when another live chat shares the workspace. An automatic attempt also protects a workspace title you changed after this plugin last wrote it. Renaming does not rename directories or Git branches. Duplicate requests for the same chat are rejected while a rename is in progress. Unavailable providers, authentication failures, quota errors and missing CLI routes are reported rather than treated as successful renames.
+The project (workspace) title is named from every live chat in it; one live chat reuses its own chat title. Two or more live chats are summarised in one extra helper run after a chat rename. Closing or archiving a tab does not refresh the project title; the next chat rename does. An automatic attempt also protects a project title you changed after this plugin last wrote it. Renaming does not rename directories or Git branches. Duplicate requests for the same chat are rejected while a rename is in progress. Unavailable providers, authentication failures, quota errors and missing CLI routes are reported rather than treated as successful renames.
 
 ## Update, troubleshoot and remove
 

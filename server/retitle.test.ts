@@ -41,6 +41,8 @@ interface Options {
   empty?: boolean;
   settings?: Partial<ChatTitleValues>;
   reply?: string;
+  projectReply?: string;
+  chats?: { id: string; title?: string | null }[];
   runFails?: string;
   refreshFails?: boolean;
   hold?: Promise<void>;
@@ -78,7 +80,7 @@ function world(options: Options = {}) {
         };
         throw new Error("the model run is injected, so no helper is created");
       },
-      list: async () => ({ entries: [{ agent: { id: AGENT, workspaceId: WORKSPACE } }], pageInfo: { nextCursor: null, hasMore: false } }),
+      list: async () => ({ entries: (options.chats ?? [{ id: AGENT, title: state.chat }]).map((agent) => ({ agent: { ...agent, workspaceId: WORKSPACE } })), pageInfo: { nextCursor: null, hasMore: false } }),
       ref: (id) => ({
         refresh: async () => {
           if (options.refreshFails) throw new Error("daemon unreachable");
@@ -123,6 +125,7 @@ function world(options: Options = {}) {
       options.modelStarted?.();
       await options.hold;
       if (options.runFails) throw new Error(options.runFails);
+      if (prompt.startsWith("You name projects")) return options.projectReply ?? "Shared project name";
       return options.reply ?? NEW_TITLE;
     },
     now: () => new Date("2026-11-13T05:00:00.000Z"),
@@ -158,16 +161,17 @@ describe("retitle", () => {
     expect(w.calls.cli).toEqual([]); expect(w.calls.workspaceSets).toEqual([]);
   });
 
-  it("does not write a workspace after cancellation during the asynchronous shared-workspace check", async () => {
-    const w = world({ settings: { targets: { chat: false, workspace: true } } }); const controller = new AbortController();
+  it("writes the chat first, then leaves the workspace alone when cancelled during the chat census", async () => {
+    const w = world(); const controller = new AbortController();
     let entered!: () => void; const checking = new Promise<void>((resolve) => { entered = resolve; });
     let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; }); const list = w.daemon.agents.list;
     w.daemon.agents.list = async (options) => { entered(); await gate; return list(options); };
     const pending = w.retitler.retitle(w.daemon, { agentId: AGENT, source: "manual", signal: controller.signal });
     await checking; controller.abort(); release();
     const result = await pending;
+    expect(result.chat).toEqual({ status: "renamed" });
     expect(result.workspace).toEqual({ status: "skipped", detail: "The rename was cancelled." });
-    expect(w.calls.cli).toEqual([]); expect(w.calls.workspaceSets).toEqual([]);
+    expect(w.calls.cli).toEqual([NEW_TITLE]); expect(w.calls.workspaceSets).toEqual([]);
   });
   it("leaves both titles untouched when the real helper runner receives an idle quota notice", async () => {
     const notice = "You've hit your 5-hour limit · resets 12:50pm (Asia/Jakarta)";
@@ -197,6 +201,18 @@ describe("retitle", () => {
     expect(w.state).toEqual({ chat: NEW_TITLE, workspace: NEW_TITLE });
     expect(await w.store.get(AGENT)).toEqual({ title: NEW_TITLE, workspaceTitle: NEW_TITLE, turns: 0, renamedAt: "2026-11-13T05:00:00.000Z" });
     expect((await w.store.recent()).map((entry) => entry.status)).toEqual(["renamed"]);
+  });
+
+  it("names a shared project from every live chat in one summary", async () => {
+    const w = world({ chats: [{ id: AGENT, title: "Alpha" }, { id: "b", title: "Beta" }], projectReply: "Shared project work" });
+    const result = await w.retitler.retitle(w.daemon, { agentId: AGENT, source: "manual" });
+    expect(result.chat).toEqual({ status: "renamed" });
+    expect(result.workspace).toEqual({ status: "renamed", detail: "Named from 2 live chats." });
+    expect(w.state).toEqual({ chat: NEW_TITLE, workspace: "Shared project work" });
+    expect(w.calls.models).toHaveLength(2);
+    expect(w.calls.models[1]?.prompt).toContain("You name projects");
+    expect(w.calls.models[1]?.prompt).toContain('title: "Beta"');
+    expect(await w.store.workspace(WORKSPACE)).toMatchObject({ title: "Shared project work" });
   });
 
   it("on its own, renames a chat whose title is still the one Paseo made from the first prompt", async () => {

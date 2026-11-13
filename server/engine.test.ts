@@ -2,14 +2,17 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { windowDefaults } from "../shared/settings";
+import { settingsFallback, windowDefaults } from "../shared/settings";
 import { sanitizeTitle } from "../shared/title";
 import type { TimelineEntryLike } from "../shared/window";
-import { applyTitle, type ApplyPaseo } from "./apply";
+import { applyChatTitle } from "./apply";
 import type { ResolvedModel } from "./catalog";
 import { runTitleModel, type HelperAgent, type RunnerPaseo } from "./llm";
 import { readWindow, type TimelinePage, type TimelineSource } from "./messages";
+import { applyProjectTitle, type ProjectSource } from "./project-apply";
+import { createProjectTitles } from "./project-title";
 import { buildTitlePrompt } from "./prompt";
+import { createStateStore } from "./state";
 
 const MODEL: ResolvedModel = { provider: "claude", model: "claude-haiku-5-5", thinking: "off", mode: "plan" };
 const CHAT = { id: "chat-1", workspaceId: "wks-chat" };
@@ -72,10 +75,13 @@ function daemon(rows: TimelineEntryLike[], answer: (prompt: string) => string, p
     },
     workspaces: { archive: async () => ({}) },
   };
-  const apply: ApplyPaseo = {
+  const apply: ProjectSource = {
     agents: {
-      list: async () => ({ entries: [{ agent: { id: CHAT.id, workspaceId: CHAT.workspaceId } }], pageInfo: { nextCursor: null, hasMore: false } }),
-      ref: () => ({ refresh: async () => ({ agent: { title: state.chatTitle } }) }),
+      list: async () => ({ entries: [{ agent: { id: CHAT.id, workspaceId: CHAT.workspaceId, title: state.chatTitle } }], pageInfo: { nextCursor: null, hasMore: false } }),
+      ref: () => ({
+        refresh: async () => ({ agent: { id: CHAT.id, title: state.chatTitle } }),
+        timeline: { refetch: async () => ({ entries: [], hasOlder: false, startCursor: null }) },
+      }),
     },
     workspaces: {
       ref: () => ({
@@ -101,8 +107,21 @@ async function run(d: ReturnType<typeof daemon>) {
   const prompt = buildTitlePrompt({ messages: window.messages, currentTitle });
   const title = sanitizeTitle(await runTitleModel(d.runner, MODEL, prompt, { scratchRoot }));
   if (!title) return { title, window, result: undefined };
-  const result = await applyTitle({ paseo: d.apply, setChatTitle: d.setChatTitle }, { agentId: CHAT.id, workspaceId: CHAT.workspaceId, title, currentChatTitle: currentTitle, targets: { chat: true, workspace: true } });
-  return { title, window, result };
+  const chat = await applyChatTitle({ paseo: d.apply, setChatTitle: d.setChatTitle }, { agentId: CHAT.id, title, currentChatTitle: currentTitle, enabled: true });
+  const state = createStateStore(join(scratchRoot, "state.json"));
+  const project = await applyProjectTitle(
+    d.apply,
+    {
+      settings: settingsFallback,
+      state,
+      titles: createProjectTitles(),
+      runModel: async () => { throw new Error("a one-chat project must reuse the chat title"); },
+      model: MODEL,
+      now: () => new Date("2026-11-13T05:00:00.000Z"),
+    },
+    { agentId: CHAT.id, chatTitle: title, workspaceId: CHAT.workspaceId, source: "manual" },
+  );
+  return { title, window, result: { chat, workspace: project.workspace } };
 }
 
 describe("engine: timeline to applied title", () => {

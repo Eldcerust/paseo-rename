@@ -26,8 +26,23 @@ const memorySchema = z.object({
   attemptedAt: z.string().optional(),
 });
 
+/** What the plugin remembers about one workspace's project title. */
+export interface WorkspaceMemory {
+  /** The last project title this plugin wrote or confirmed. */
+  title: string;
+  /** When it was written or confirmed. */
+  at?: string;
+}
+
+const workspaceSchema = z.object({
+  title: z.string().trim().min(1),
+  at: z.string().optional(),
+});
+
 export const DEFAULT_MAX_AGENTS = 500;
 export const DEFAULT_MAX_RECENT = 20;
+/** How many workspaces may keep a remembered project title. Workspaces are few; this is a safety bound. */
+export const DEFAULT_MAX_WORKSPACES = 1000;
 /** How many chats may have automatic renaming switched on. Refused beyond it; a chat is never silently dropped. */
 export const MAX_AUTO_CHATS = 5000;
 
@@ -38,6 +53,10 @@ export interface StateStore {
   /** Adds a result to the list the settings screen shows, newest first. */
   pushResult(result: RetitleResult): Promise<void>;
   recent(): Promise<RetitleResult[]>;
+  /** The last project title this plugin wrote or confirmed for the workspace, if any. */
+  workspace(workspaceId: string): Promise<WorkspaceMemory | undefined>;
+  /** Records the project title this plugin just wrote or confirmed, and saves it. */
+  setWorkspace(workspaceId: string, title: string, at?: string): Promise<void>;
   /** Whether automatic renaming is switched on for this chat. Every chat starts off. */
   chatAuto(agentId: string): Promise<boolean>;
   /**
@@ -60,15 +79,23 @@ interface Doc {
   recent: RetitleResult[];
   /** The chats with automatic renaming on. Kept apart from `agents`, which forgets the quietest chats; absent means off. */
   auto: Set<string>;
+  /** The last project title this plugin wrote or confirmed, per workspace. */
+  workspaces: Map<string, WorkspaceMemory>;
 }
 
 /** Reads what it can: one malformed record never costs the rest, and an unreadable file starts over. */
 function parseDoc(text: string): Doc {
-  const doc: Doc = { agents: new Map(), recent: [], auto: new Set() };
+  const doc: Doc = { agents: new Map(), recent: [], auto: new Set(), workspaces: new Map() };
   const raw: unknown = JSON.parse(text);
   if (!raw || typeof raw !== "object") return doc;
-  const { agents, recent, auto } = raw as { agents?: unknown; recent?: unknown; auto?: unknown };
+  const { agents, recent, auto, workspaces } = raw as { agents?: unknown; recent?: unknown; auto?: unknown; workspaces?: unknown };
   if (Array.isArray(auto)) for (const id of auto) if (typeof id === "string" && id.length > 0) doc.auto.add(id);
+  if (workspaces && typeof workspaces === "object" && !Array.isArray(workspaces)) {
+    for (const [id, value] of Object.entries(workspaces)) {
+      const parsed = workspaceSchema.safeParse(value);
+      if (id !== "" && parsed.success) doc.workspaces.set(id, parsed.data);
+    }
+  }
   if (agents && typeof agents === "object") {
     for (const [id, value] of Object.entries(agents)) {
       const parsed = memorySchema.safeParse(value);
@@ -84,7 +111,7 @@ function parseDoc(text: string): Doc {
   return doc;
 }
 
-export function createStateStore(file: string, { maxAgents = DEFAULT_MAX_AGENTS, maxRecent = DEFAULT_MAX_RECENT, maxAutoChats = MAX_AUTO_CHATS }: { maxAgents?: number; maxRecent?: number; maxAutoChats?: number } = {}): StateStore {
+export function createStateStore(file: string, { maxAgents = DEFAULT_MAX_AGENTS, maxRecent = DEFAULT_MAX_RECENT, maxAutoChats = MAX_AUTO_CHATS, maxWorkspaces = DEFAULT_MAX_WORKSPACES }: { maxAgents?: number; maxRecent?: number; maxAutoChats?: number; maxWorkspaces?: number } = {}): StateStore {
   let loaded: Promise<Doc> | undefined;
   let queue: Promise<unknown> = Promise.resolve();
 
@@ -95,13 +122,13 @@ export function createStateStore(file: string, { maxAgents = DEFAULT_MAX_AGENTS,
         text = await fs.readFile(file, "utf8");
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error(`[chat-title] cannot read ${file}; starting over`, error);
-        return { agents: new Map(), recent: [], auto: new Set() } satisfies Doc;
+        return { agents: new Map(), recent: [], auto: new Set(), workspaces: new Map() } satisfies Doc;
       }
       try {
         return parseDoc(text);
       } catch (error) {
         console.error(`[chat-title] ignoring unreadable ${file}`, error);
-        return { agents: new Map(), recent: [], auto: new Set() } satisfies Doc;
+        return { agents: new Map(), recent: [], auto: new Set(), workspaces: new Map() } satisfies Doc;
       }
     })());
 
@@ -117,7 +144,7 @@ export function createStateStore(file: string, { maxAgents = DEFAULT_MAX_AGENTS,
 
   async function save(doc: Doc): Promise<void> {
     const temporary = `${file}.${process.pid}.${randomUUID()}.tmp`;
-    const body = JSON.stringify({ version: 1, agents: Object.fromEntries(doc.agents), recent: doc.recent, auto: [...doc.auto] });
+    const body = JSON.stringify({ version: 1, agents: Object.fromEntries(doc.agents), recent: doc.recent, auto: [...doc.auto], workspaces: Object.fromEntries(doc.workspaces) });
     try {
       await fs.mkdir(dirname(file), { recursive: true });
       await fs.writeFile(temporary, `${body}\n`, "utf8");
@@ -156,6 +183,25 @@ export function createStateStore(file: string, { maxAgents = DEFAULT_MAX_AGENTS,
     },
     async recent() {
       return [...(await load()).recent];
+    },
+    async workspace(workspaceId) {
+      const found = (await load()).workspaces.get(workspaceId);
+      return found ? { ...found } : undefined;
+    },
+    setWorkspace(workspaceId, title, at) {
+      const value = title.trim();
+      if (value === "") return Promise.reject(new Error("A workspace title must not be empty."));
+      return serialize(async () => {
+        const doc = await load();
+        doc.workspaces.delete(workspaceId);
+        doc.workspaces.set(workspaceId, { title: value, ...(at ? { at } : {}) });
+        while (doc.workspaces.size > maxWorkspaces) {
+          const oldest = doc.workspaces.keys().next().value;
+          if (oldest === undefined) break;
+          doc.workspaces.delete(oldest);
+        }
+        await save(doc);
+      });
     },
     async chatAuto(agentId) {
       return (await load()).auto.has(agentId);

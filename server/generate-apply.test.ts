@@ -2,11 +2,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { settingsFallback } from "../shared/settings";
 import { sanitizeTitle } from "../shared/title";
-import { applyTitle, type ApplyPaseo } from "./apply";
+import { applyChatTitle } from "./apply";
 import type { ResolvedModel } from "./catalog";
 import { renameAgentWithCli, type CliEnvironment, type Invocation, type RunCli } from "./cli";
 import { runTitleModel, type HelperAgent, type RunnerPaseo } from "./llm";
+import { applyProjectTitle, type ProjectSource } from "./project-apply";
+import { createProjectTitles } from "./project-title";
+import { createStateStore } from "./state";
 
 const MODEL: ResolvedModel = { provider: "opencode", model: "opencode-go/deepseek-v4.1-flash", thinking: "low", mode: "plan" };
 const CHAT = { id: "chat-1", workspaceId: "wks-chat" };
@@ -47,10 +51,13 @@ function daemon(reply: string, options: { cliFails?: boolean } = {}) {
       },
     },
   };
-  const apply: ApplyPaseo = {
+  const apply: ProjectSource = {
     agents: {
-      list: async () => ({ entries: [{ agent: { id: CHAT.id, workspaceId: CHAT.workspaceId } }], pageInfo: { nextCursor: null, hasMore: false } }),
-      ref: () => ({ refresh: async () => ({ agent: { title: state.chatTitle } }) }),
+      list: async () => ({ entries: [{ agent: { id: CHAT.id, workspaceId: CHAT.workspaceId, title: state.chatTitle } }], pageInfo: { nextCursor: null, hasMore: false } }),
+      ref: () => ({
+        refresh: async () => ({ agent: { id: CHAT.id, title: state.chatTitle } }),
+        timeline: { refetch: async () => ({ entries: [], hasOlder: false, startCursor: null }) },
+      }),
     },
     workspaces: {
       ref: () => ({
@@ -75,7 +82,19 @@ async function generateAndApply(d: ReturnType<typeof daemon>) {
   const reply = await runTitleModel(d.runner, MODEL, "the prompt", { scratchRoot });
   const title = sanitizeTitle(reply);
   if (!title) throw new Error(`unusable reply: ${reply}`);
-  return { title, result: await applyTitle({ paseo: d.apply, setChatTitle: d.setChatTitle }, { agentId: CHAT.id, workspaceId: CHAT.workspaceId, title, currentChatTitle: d.state.chatTitle, targets: { chat: true, workspace: true } }) };
+  const chat = await applyChatTitle({ paseo: d.apply, setChatTitle: d.setChatTitle }, { agentId: CHAT.id, title, currentChatTitle: d.state.chatTitle, enabled: true });
+  const project = await applyProjectTitle(
+    d.apply,
+    {
+      settings: settingsFallback,
+      state: createStateStore(join(scratchRoot, "state.json")),
+      titles: createProjectTitles(),
+      runModel: async () => { throw new Error("a one-chat project must reuse the chat title"); },
+      model: MODEL,
+    },
+    { agentId: CHAT.id, chatTitle: title, workspaceId: CHAT.workspaceId, source: "manual" },
+  );
+  return { title, result: { chat, workspace: project.workspace } };
 }
 
 describe("model reply to applied title", () => {
@@ -122,8 +141,8 @@ describe("model reply to applied title", () => {
     };
     const reply = await runTitleModel(d.runner, MODEL, "the prompt", { scratchRoot });
     const title = sanitizeTitle(reply)!;
-    const result = await applyTitle({ paseo: d.apply, setChatTitle }, { agentId: CHAT.id, workspaceId: CHAT.workspaceId, title, currentChatTitle: "old chat title", targets: { chat: true, workspace: false } });
-    expect(result.chat).toEqual({ status: "renamed" });
+    const result = await applyChatTitle({ paseo: d.apply, setChatTitle }, { agentId: CHAT.id, title, currentChatTitle: "old chat title", enabled: true });
+    expect(result).toEqual({ status: "renamed" });
     expect(invocations).toHaveLength(1);
     expect(invocations[0]?.shell).toBe(false);
     expect(invocations[0]?.args.slice(-5)).toEqual(["agent", "update", CHAT.id, "--name", 'Fix "archive" & 100% | done']);
