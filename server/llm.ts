@@ -63,6 +63,35 @@ export const ANSWER_WITHIN_MS = 90_000;
 const WAIT_SLICE_MS = 10_000;
 const MAX_DENIALS = 12;
 
+/** Interrupt waiting for a provider call without leaving its late rejection unobserved. */
+function untilCancelled<T>(start: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  const cancelled = () => new Error("The rename was cancelled.");
+  if (signal?.aborted) return Promise.reject(cancelled());
+  if (!signal) return start();
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const finish = (complete: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", abort);
+      complete();
+    };
+    const abort = () => finish(() => reject(cancelled()));
+    signal.addEventListener("abort", abort, { once: true });
+    if (signal.aborted) { abort(); return; }
+    try {
+      // Both handlers stay attached after abort: a late provider result cannot resume the
+      // caller, and a late provider rejection cannot become an unhandled rejection.
+      start().then(
+        (value) => finish(() => signal.aborted ? reject(cancelled()) : resolve(value)),
+        (error) => finish(() => reject(error)),
+      );
+    } catch (error) {
+      finish(() => reject(error));
+    }
+  });
+}
+
 async function lastAssistantText(agent: HelperAgent): Promise<string | undefined> {
   const page = await agent.timeline.refetch({ direction: "tail", limit: 50 });
   for (let index = page.entries.length - 1; index >= 0; index--) {
@@ -73,11 +102,11 @@ async function lastAssistantText(agent: HelperAgent): Promise<string | undefined
 }
 
 /** Whatever the helper asks permission for is refused: it is meant to answer in text alone. */
-async function denyPermissions(agent: HelperAgent): Promise<number> {
-  await agent.refresh();
+async function denyPermissions(agent: HelperAgent, signal?: AbortSignal): Promise<number> {
+  await untilCancelled(() => agent.refresh(), signal);
   const requests = agent.pendingPermissions ?? [];
   for (const request of requests) {
-    await agent.respondToPermission({ requestId: request.id, response: { behavior: "deny", message: "Answer in text only. Do not use tools.", interrupt: false } });
+    await untilCancelled(() => agent.respondToPermission({ requestId: request.id, response: { behavior: "deny", message: "Answer in text only. Do not use tools.", interrupt: false } }), signal);
   }
   return requests.length;
 }
@@ -89,16 +118,23 @@ async function replyOf(agent: HelperAgent, answerWithinMs: number, signal?: Abor
     if (signal?.aborted) throw new Error("The rename was cancelled.");
     const remaining = end - Date.now();
     if (remaining <= 0) throw new Error("The model did not answer in time.");
-    const result = await agent.waitForFinish(Math.min(WAIT_SLICE_MS, remaining));
+    const result = await untilCancelled(() => agent.waitForFinish(Math.min(WAIT_SLICE_MS, remaining)), signal);
     if (result.status === "error") throw new Error(result.error || "The model's agent failed.");
     if (result.status === "permission") {
-      denials += await denyPermissions(agent);
+      denials += await denyPermissions(agent, signal);
       if (denials > MAX_DENIALS) throw new Error("The model kept asking to use tools.");
       continue;
     }
     if (result.status === "idle") {
-      const text = result.lastMessage?.trim() || (await lastAssistantText(agent));
+      const text = result.lastMessage?.trim() || (await untilCancelled(() => lastAssistantText(agent), signal));
+      if (signal?.aborted) throw new Error("The rename was cancelled.");
       if (!text) throw new Error("The model sent no reply.");
+      // Some CLIs finish successfully with a quota/auth notice as assistant text (observed on
+      // Claude). These are provider failures, not generated titles. Anchor to notice wording so
+      // a real title such as "Fix rate limit handling" is still usable.
+      if (/^(?:(?:you(?:['’]ve| have) (?:hit|reached) your .{0,60}limit)|(?:you(?:['’]re| are) out of (?:extra )?usage)|(?:credit balance is too low)|(?:insufficient (?:credits|quota))|(?:(?:api |authentication )?error\s*:\s*(?:401|403|429|unauthorized|invalid api key)))/i.test(text)) {
+        throw new Error(`The model provider reported: ${text.slice(0, 500)}`);
+      }
       return text;
     }
     // Any other status is only this wait's slice running out: keep waiting until the overall limit.

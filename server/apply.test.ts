@@ -63,6 +63,25 @@ const input = (overrides: Partial<ApplyInput> = {}): ApplyInput => ({
 });
 
 describe("applyTitle", () => {
+  it("does not admit either title write when already cancelled", async () => {
+    const { deps, log, state } = fake(); const controller = new AbortController(); controller.abort();
+    const before = { ...state };
+    const result = await applyTitle(deps, input({ signal: controller.signal }));
+    expect(result).toEqual({ chat: { status: "skipped", detail: "The rename was cancelled." }, workspace: { status: "skipped", detail: "The rename was cancelled." } });
+    expect(log.cli).toEqual([]); expect(log.workspaceSets).toEqual([]); expect(log.listCalls).toEqual([]); expect(state).toEqual(before);
+  });
+
+  it("does not start a workspace write after cancellation during its title refresh", async () => {
+    const { deps, log } = fake(); const controller = new AbortController(); const ref = deps.paseo.workspaces.ref;
+    let entered!: () => void; const refreshing = new Promise<void>((resolve) => { entered = resolve; });
+    let release!: () => void; const gate = new Promise<void>((resolve) => { release = resolve; });
+    deps.paseo.workspaces.ref = (id) => { const workspace = ref(id); return { ...workspace, refresh: async () => { entered(); await gate; return workspace.refresh(); } }; };
+    const pending = applyTitle(deps, input({ signal: controller.signal, targets: { chat: false, workspace: true } }));
+    await refreshing; controller.abort(); release();
+    expect((await pending).workspace).toEqual({ status: "skipped", detail: "The rename was cancelled." });
+    expect(log.workspaceSets).toEqual([]); expect(log.cli).toEqual([]);
+  });
+
   it("renames the chat and, when it is alone there, its workspace, and checks the daemon shows both", async () => {
     const { deps, log, state } = fake();
     const result = await applyTitle(deps, input());

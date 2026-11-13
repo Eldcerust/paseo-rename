@@ -16,7 +16,9 @@
     "index.server.tsx",
     "client/",
     "server/",
-    "shared/"
+    "shared/",
+    "!**/*.test.ts",
+    "!server/live-client.ts"
   ],
   "scripts": {
     "typecheck": "tsc --noEmit",

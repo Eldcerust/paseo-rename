@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TimelineEntryLike } from "../shared/window";
-import { MAX_PAGES, PAGE_ROWS, readWindow, type TimelinePage, type TimelineRequest, type TimelineSource } from "./messages";
+import { FIRST_ROWS, MAX_PAGES, PAGE_ROWS, readFirstPrompt, readWindow, type TimelinePage, type TimelineRequest, type TimelineSource } from "./messages";
 
 const user = (text: string, turnId?: string): TimelineEntryLike => ({ turnId, item: { type: "user_message", text } });
 const reply = (text: string, turnId?: string): TimelineEntryLike => ({ turnId, item: { type: "assistant_message", text } });
@@ -135,5 +135,36 @@ describe("readWindow", () => {
   it("passes a daemon error to the caller", async () => {
     const source: TimelineSource = { agents: { ref: () => ({ timeline: { refetch: async () => Promise.reject(new Error("daemon went away")) } }) } };
     await expect(readWindow(source, "a", request)).rejects.toThrow("daemon went away");
+  });
+});
+
+describe("readFirstPrompt", () => {
+  const tailPage: TimelinePage = { entries: [tool("t9")], hasOlder: true, startCursor: cursor(900), epoch: "epoch-7" };
+
+  it("takes the epoch from a one-row tail request, then reads the start of the chat after sequence 0", async () => {
+    const { source, requests } = fakeSource([tailPage, { entries: [user("  How do I rename a chat?  ", "t1"), reply("Use the title field.", "t1")], hasOlder: false, startCursor: cursor(1) }]);
+    expect(await readFirstPrompt(source, "agent-3")).toBe("How do I rename a chat?");
+    expect(requests).toEqual([
+      { direction: "tail", limit: 1, projection: "projected" },
+      { direction: "after", cursor: { epoch: "epoch-7", seq: 0 }, limit: FIRST_ROWS, projection: "projected" },
+    ]);
+  });
+
+  it("returns the first user message, not a later one, and skips rows before it", async () => {
+    const { source } = fakeSource([tailPage, { entries: [tool("t0"), reply("An unprompted note", "t0"), user("the first ask", "t1"), user("a later ask", "t2")], hasOlder: false, startCursor: cursor(1) }]);
+    expect(await readFirstPrompt(source, "a")).toBe("the first ask");
+  });
+
+  it("returns undefined when the opening rows hold no user message, or the chat is empty", async () => {
+    const { source: noUser } = fakeSource([tailPage, { entries: [tool("t1"), reply("hello", "t1")], hasOlder: false, startCursor: cursor(1) }]);
+    expect(await readFirstPrompt(noUser, "a")).toBeUndefined();
+    const { source: empty } = fakeSource([{ entries: [], hasOlder: false, startCursor: null, epoch: "e" }, { entries: [], hasOlder: false, startCursor: null }]);
+    expect(await readFirstPrompt(empty, "a")).toBeUndefined();
+  });
+
+  it("does not guess when the daemon gives no epoch to continue from", async () => {
+    const { source, requests } = fakeSource([{ entries: [], hasOlder: false, startCursor: null }]);
+    expect(await readFirstPrompt(source, "a")).toBeUndefined();
+    expect(requests).toHaveLength(1);
   });
 });

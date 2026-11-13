@@ -2,7 +2,7 @@ import type { PaseoClient } from "@getpaseo/client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { windowDefaults } from "../shared/settings";
 import { LIVE, connectLive } from "./live-client";
-import { readWindow } from "./messages";
+import { readFirstPrompt, readWindow } from "./messages";
 
 const { messages: WINDOW, charsPerMessage: CAP } = windowDefaults;
 
@@ -64,6 +64,18 @@ describe.skipIf(!LIVE)("reading a window from chats on the local daemon", () => 
       if (result.reachedStart) expect(result.found).toBe(chat.expected);
       else expect(result.found).toBeGreaterThanOrEqual(WINDOW + 1);
     }
+  }, 120_000);
+
+  it("finds the same first prompt as a full read of the chat, which is the start of the title Paseo made", async () => {
+    let checked = 0;
+    for (const chat of chats) {
+      const page = await paseo.agents.ref(chat.id).timeline.refetch({ direction: "tail", limit: 0, projection: "projected" });
+      const expected = page.entries.find((entry) => entry.item.type === "user_message" && entry.item.text.trim() !== "");
+      const found = await readFirstPrompt(paseo, chat.id);
+      expect(found, `chat ${chat.id.slice(0, 8)}`).toBe(expected?.item.type === "user_message" ? expected.item.text.trim() : undefined);
+      if (found) checked += 1;
+    }
+    expect(checked).toBeGreaterThanOrEqual(2);
   }, 120_000);
 
   it("reads past one page of rows for a chat whose recent rows are mostly tool calls", async () => {

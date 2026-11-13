@@ -31,6 +31,8 @@ export interface ApplyInput {
   /** The chat's title now, so an identical one is not written again. */
   currentChatTitle: string | null;
   targets: { chat: boolean; workspace: boolean };
+  /** Internal lifetime guard: never start a title write after plugin teardown began. */
+  signal?: AbortSignal;
 }
 
 export interface ApplyResult {
@@ -59,6 +61,7 @@ async function otherChatsIn(paseo: ApplyPaseo, workspaceId: string, agentId: str
 }
 
 async function applyToChat(deps: { paseo: ApplyPaseo; setChatTitle: SetChatTitle }, input: ApplyInput): Promise<TargetOutcome> {
+  if (input.signal?.aborted) return skipped("The rename was cancelled.");
   if (!input.targets.chat) return skipped("Turned off in the settings.");
   if (input.currentChatTitle === input.title) return { status: "unchanged" };
   try {
@@ -72,6 +75,7 @@ async function applyToChat(deps: { paseo: ApplyPaseo; setChatTitle: SetChatTitle
 }
 
 async function applyToWorkspace(paseo: ApplyPaseo, input: ApplyInput): Promise<TargetOutcome> {
+  if (input.signal?.aborted) return skipped("The rename was cancelled.");
   if (!input.targets.workspace) return skipped("Turned off in the settings.");
   if (!input.workspaceId) return skipped("The chat has no workspace.");
   try {
@@ -80,6 +84,7 @@ async function applyToWorkspace(paseo: ApplyPaseo, input: ApplyInput): Promise<T
     if (others > 0) return skipped(`${others === 1 ? "Another chat uses" : `${others} other chats use`} this workspace, so its name was left alone.`);
     const workspace = paseo.workspaces.ref(input.workspaceId);
     const current = await workspace.refresh();
+    if (input.signal?.aborted) return skipped("The rename was cancelled.");
     if (current && (current.title ?? current.name) === input.title) return { status: "unchanged" };
     const result = await workspace.setTitle(input.title);
     if (result.title !== input.title) return { status: "failed", detail: "The daemon did not keep the new workspace title." };

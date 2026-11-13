@@ -12,10 +12,12 @@ export interface TimelinePage {
   entries: readonly TimelineEntryLike[];
   hasOlder: boolean;
   startCursor: TimelineCursor | null;
+  /** Names the timeline's current history; a cursor is only valid with the epoch it came from. */
+  epoch?: string;
 }
 
 export interface TimelineRequest {
-  direction: "tail" | "before";
+  direction: "tail" | "before" | "after";
   cursor?: TimelineCursor;
   limit: number;
   projection: "projected";
@@ -39,6 +41,25 @@ export interface ReadWindow {
   found: number;
   /** True when the whole chat was read, so the window starts at the first message. */
   reachedStart: boolean;
+}
+
+/** Rows read from the start of a chat when looking for its first prompt: the prompt is the very first row or close to it. */
+export const FIRST_ROWS = 40;
+
+/**
+ * The text of the first thing the user said in a chat, or undefined when it has none. It is read
+ * from the start of the timeline directly, so it costs two small requests however long the chat is.
+ * Used to tell the title Paseo made from that prompt apart from a title a person typed.
+ */
+export async function readFirstPrompt(source: TimelineSource, agentId: string): Promise<string | undefined> {
+  const timeline = source.agents.ref(agentId).timeline;
+  const tail = await timeline.refetch({ direction: "tail", limit: 1, projection: "projected" });
+  if (!tail.epoch) return undefined;
+  const start = await timeline.refetch({ direction: "after", cursor: { epoch: tail.epoch, seq: 0 }, limit: FIRST_ROWS, projection: "projected" });
+  for (const entry of start.entries) {
+    if (entry.item.type === "user_message" && entry.item.text?.trim()) return entry.item.text.trim();
+  }
+  return undefined;
 }
 
 /** Rows asked for per page. A page of agent work is mostly tool rows, so this is generous. */
