@@ -32,7 +32,7 @@ Paseo supplies the runtime libraries and compiles the plugin; installing from Gi
 
 ### First rename
 
-1. Click **Rename Chat Title** in the sidebar to open the settings directly. You can also open **Chat titles** in plugin settings, or **Chat titles settings** from the Command Center.
+1. Click **Rename Chat Title** in the sidebar header to open the settings directly. You can also open **Chat titles** in plugin settings, or **Chat titles settings** from the Command Center.
 2. Choose an available provider and model, or keep the built-in preference described below.
 3. Use **Generate sample title** to check the saved model without changing a chat.
 4. Open a chat, then choose **Auto rename → Rename now**, or submit **`/retitle`**.
@@ -41,7 +41,7 @@ Settings belong to the selected host and are shared by that host's connected cli
 
 ## Use
 
-- **Configure:** click **Rename Chat Title** in the sidebar. This opens the existing settings for the selected host; it does not rename a chat. Paseo's **Settings → Sidebar** controls the row's visibility and order.
+- **Configure:** click **Rename Chat Title** in the sidebar header. This opens the existing settings for the selected host; it does not rename a chat. Paseo's **Settings → Sidebar** controls the row's visibility and order.
 - Submit **`/retitle`**, without arguments, in the chat you want to rename. The command does not send a prompt to that chat's provider. It opens a result screen while the plugin runs a separate title helper.
 - The Command Center's **Rename this chat from recent messages** does the same thing for its current chat.
 - Click **Auto rename** in the composer. It shows this chat's current title and how the last rename went (renamed, title still fits, left unchanged, or what failed and for which target, with the time), then offers **Rename now**, a **Rename automatically** switch for this chat, and **Auto-rename settings**. If Pill hub is running and merging is enabled for Auto rename, these actions appear inside its **Tools** pill instead. Turn that tool's merge switch off in Pill hub to restore its standalone pill. No Pill hub installation is required.

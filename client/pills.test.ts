@@ -34,7 +34,8 @@ function harness(deferred = false) {
     rpc, openSettings: vi.fn(), openScreen: vi.fn(),
     addComposerPill: vi.fn((spec) => { const registration = { update: vi.fn(), remove: vi.fn() }; own.push({ ...spec, registration }); return registration; }),
     addSettingsScreen: vi.fn((spec) => { settings.push(spec); return vi.fn(); }),
-    addSidebarFooterItem: vi.fn((spec) => { const remove = vi.fn(); sidebar.push({ ...spec, remove }); return remove; }),
+    addSidebarHeaderItem: vi.fn((spec) => { const remove = vi.fn(); sidebar.push({ ...spec, remove }); return remove; }),
+    addSidebarFooterItem: vi.fn(() => vi.fn()),
     addScreen: vi.fn(() => vi.fn()), addSlashCommand: vi.fn(() => vi.fn()), addCommandCenterItem: vi.fn(() => vi.fn()),
   } as unknown as PluginClientContext;
   const actions = createRenameActions(client);
@@ -67,8 +68,10 @@ describe("Auto rename settings and composer tool", () => {
     h.snapshot([agent("a")]); expect(h.own).toHaveLength(1);
     cleanup(); cleanup(); expect(h.own[0].registration.remove).toHaveBeenCalledTimes(1); expect(h.signal().aborted).toBe(true);
   });
-  it("adds a native sidebar shortcut that opens configuration directly on wide and compact layouts", async () => {
+  it("adds a native sidebar header shortcut that opens configuration directly on wide and compact layouts", async () => {
     const h = harness(); const cleanup = contribute(h.client); await tick();
+    expect(h.client.addSidebarHeaderItem).toHaveBeenCalledOnce();
+    expect(h.client.addSidebarFooterItem).not.toHaveBeenCalled();
     expect(h.sidebar).toHaveLength(1);
     expect(h.sidebar[0]).toMatchObject({ id: "settings", title: "Rename Chat Title" });
     for (const compact of [false, true]) {

@@ -9,7 +9,7 @@ export default function contribute(client: PluginClientContext) {
   const removers = [
     () => actions.dispose(),
     client.addSettingsScreen({ id: TITLES_SETTINGS, title: "Chat titles", icon: "CaseSensitive", Component: TitleSettingsScreen }),
-    client.addSidebarFooterItem({
+    client.addSidebarHeaderItem({
       id: "settings", title: "Rename Chat Title",
       Component: () => <SidebarRow icon="CaseSensitive" label="Rename Chat Title" onPress={() => client.openSettings(TITLES_SETTINGS)} />,
     }),
