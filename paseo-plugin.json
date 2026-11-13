@@ -1,0 +1,9 @@
+{
+  "id": "chat-title",
+  "name": "Chat titles",
+  "description": "Renames a chat from its most recent messages, with a provider and model you choose.",
+  "media": [],
+  "requirements": {
+    "paseo": ">=0.15.4"
+  }
+}

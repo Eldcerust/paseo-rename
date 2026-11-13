@@ -1,0 +1,37 @@
+{
+  "name": "paseo-chat-title",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "author": "Eldcerust",
+  "description": "Renames a Paseo chat from its most recent messages, using a provider and model you choose.",
+  "files": [
+    "LICENSE",
+    "paseo-plugin.json",
+    "OVERVIEW.md",
+    "OVERVIEW.*.md",
+    "index.client.ts",
+    "index.client.tsx",
+    "index.server.ts",
+    "index.server.tsx",
+    "client/",
+    "server/",
+    "shared/"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --testTimeout=30000"
+  },
+  "devDependencies": {
+    "@getpaseo/client": "0.15.4",
+    "@getpaseo/plugin": "0.15.4",
+    "@tanstack/react-query": "^5.90.11",
+    "@types/node": "^24.19.2",
+    "@types/react": "~19.2.0",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7",
+    "zod": "^4.4.3"
+  }
+}
