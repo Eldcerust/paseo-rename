@@ -91,6 +91,26 @@ function unwrap(text: string): string {
   return current;
 }
 
+/**
+ * Replies that are the assistant talking instead of titling: first person, an offer or a question to the person,
+ * a greeting or a thank-you, or more than one sentence. A title is one short phrase. Observed on a real helper:
+ * "I'm in Plan mode and there's no new request to work on. Tell me what you'd like planned...". Kept narrow so a
+ * title that only looks like speech still works ("Let's Encrypt certificate renewal", "Sure Footing: hiking app").
+ */
+const ASSISTANT_VOICE: RegExp[] = [
+  /^i(?:['’](?:m|ll|ve|d)\b| (?:am|will|can|have|would|need|see|think|could|don['’]t|do not|cannot|can['’]t)\b)/i,
+  /^let me\b/i,
+  /^(?:sure|certainly|of course|okay|ok|absolutely)[,!.]/i,
+  /^here(?:['’]s| is| are)\b/i,
+  /^there(?:['’]s| is| are) no\b/i,
+  /^no (?:new )?(?:request|message|task|content|conversation)\b/i,
+  /^(?:how can i|could you|can you|would you|what would you)\b/i,
+  /^thank(?:s| you)(?:\s+(?:for|so much)\b|[,!.])/i,
+  /\b(?:tell me what|let me know|what you['’]d like|what you would like|how can i (?:help|assist))\b/i,
+  /[.!?]["'”’)\]]*\s+\p{Lu}/u,
+];
+const looksLikeAnswer = (text: string) => ASSISTANT_VOICE.some((voice) => voice.test(text));
+
 /** Cuts at a word boundary when one is near the end, never inside a surrogate pair. */
 function cut(text: string, max: number): string {
   if (text.length <= max) return text;
@@ -101,6 +121,9 @@ function cut(text: string, max: number): string {
   if (last >= 0xd800 && last <= 0xdbff) end = end.slice(0, -1);
   return end;
 }
+
+/** Whether a model's reply can be cleaned into a title. The helper runner uses it to pick the right one of its messages. */
+export const isUsableTitle = (reply: string): boolean => sanitizeTitle(reply) !== undefined;
 
 /**
  * Cleans a model's reply into a chat title, or returns undefined when there is none worth using:
@@ -122,6 +145,8 @@ export function sanitizeTitle(reply: string, maxChars: number = TITLE_MAX_CHARS)
   text = text.replace(/^(chat\s+)?title\s*[:\-–—]\s*/i, "");
   text = unwrap(text);
   text = text.replace(/[\s.,;:。、]+$/u, "");
+  // Judged before the cut, so a long answer cannot be shortened into something that looks like a title.
+  if (looksLikeAnswer(text)) return undefined;
   text = cut(text, maxChars).replace(/[\s.,;:。、\-–—]+$/u, "");
   if (text.length < TITLE_MIN_CHARS) return undefined;
   if (!/[\p{L}\p{N}]/u.test(text)) return undefined;

@@ -57,6 +57,11 @@ export interface RunOptions {
   signal?: AbortSignal;
   /** Where the scratch folder lives. Defaults to the system temp folder. */
   scratchRoot?: string;
+  /**
+   * Whether a reply is usable. The helper's own messages are tried in the order it sent them and the first that passes
+   * wins; when none does the first one is returned, so the caller can say why it was not usable.
+   */
+  accept?: (reply: string) => boolean;
 }
 
 export const ANSWER_WITHIN_MS = 90_000;
@@ -92,13 +97,20 @@ function untilCancelled<T>(start: () => Promise<T>, signal?: AbortSignal): Promi
   });
 }
 
-async function lastAssistantText(agent: HelperAgent): Promise<string | undefined> {
+/** Everything the helper said, oldest first. Reasoning, tool and notification rows are not replies. */
+async function assistantReplies(agent: HelperAgent): Promise<string[]> {
   const page = await agent.timeline.refetch({ direction: "tail", limit: 50 });
-  for (let index = page.entries.length - 1; index >= 0; index--) {
-    const item = page.entries[index]?.item;
-    if (item?.type === "assistant_message" && item.text?.trim()) return item.text;
-  }
-  return undefined;
+  return page.entries.flatMap(({ item }) => (item.type === "assistant_message" && item.text?.trim() ? [item.text] : []));
+}
+
+/**
+ * The reply to the prompt out of everything the helper said. It is the FIRST usable message, not the last: a helper
+ * can speak again after answering. Observed: OpenCode in plan mode added a plan-mode reminder after the title and
+ * answered it ("I'm in Plan mode and there's no new request to work on..."), and that second message was the helper's
+ * last. When no message is usable the first is returned so the caller can say why.
+ */
+export function pickReply(replies: readonly string[], accept: (reply: string) => boolean = () => true): string | undefined {
+  return replies.find(accept) ?? replies[0];
 }
 
 /** Whatever the helper asks permission for is refused: it is meant to answer in text alone. */
@@ -111,7 +123,7 @@ async function denyPermissions(agent: HelperAgent, signal?: AbortSignal): Promis
   return requests.length;
 }
 
-async function replyOf(agent: HelperAgent, answerWithinMs: number, signal?: AbortSignal): Promise<string> {
+async function replyOf(agent: HelperAgent, answerWithinMs: number, signal?: AbortSignal, accept?: (reply: string) => boolean): Promise<string> {
   const end = Date.now() + answerWithinMs;
   let denials = 0;
   for (;;) {
@@ -126,8 +138,16 @@ async function replyOf(agent: HelperAgent, answerWithinMs: number, signal?: Abor
       continue;
     }
     if (result.status === "idle") {
-      const text = result.lastMessage?.trim() || (await untilCancelled(() => lastAssistantText(agent), signal));
+      // The daemon's last message is not necessarily the reply to the prompt (see pickReply), so the helper's own messages are read.
+      // A timeline that cannot be read falls back to what the daemon reported, and is an error only when it reported nothing.
+      let replies: string[] = [];
+      try {
+        replies = await untilCancelled(() => assistantReplies(agent), signal);
+      } catch (error) {
+        if (signal?.aborted || !result.lastMessage?.trim()) throw error;
+      }
       if (signal?.aborted) throw new Error("The rename was cancelled.");
+      const text = pickReply(replies, accept)?.trim() || result.lastMessage?.trim();
       if (!text) throw new Error("The model sent no reply.");
       // Some CLIs finish successfully with a quota/auth notice as assistant text (observed on
       // Claude). These are provider failures, not generated titles. Anchor to notice wording so
@@ -178,7 +198,7 @@ async function runOne(paseo: RunnerPaseo, model: ResolvedModel, prompt: string, 
       background: true,
       labels: { ...HELPER_LABEL },
     });
-    return await replyOf(agent, options.answerWithinMs ?? ANSWER_WITHIN_MS, options.signal);
+    return await replyOf(agent, options.answerWithinMs ?? ANSWER_WITHIN_MS, options.signal, options.accept);
   } finally {
     if (agent) {
       const workspaceId = agent.workspaceId;

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ResolvedModel } from "./catalog";
-import { HELPER_LABEL, HELPER_TITLE, SCRATCH_NAME, isHelperAgent, runTitleModel, scratchFolder, type HelperAgent, type HelperCreate, type RunnerPaseo } from "./llm";
+import { HELPER_LABEL, HELPER_TITLE, SCRATCH_NAME, isHelperAgent, pickReply, runTitleModel, scratchFolder, type HelperAgent, type HelperCreate, type RunnerPaseo } from "./llm";
 
 type Wait = { status: string; error?: string | null; lastMessage?: string | null };
 
@@ -187,9 +187,51 @@ describe("runTitleModel", () => {
     expect(await run(paseo)).toBe("Fix rate limit handling in the API");
   });
 
-  it("reads the last assistant message from the timeline when the finish result has no text", async () => {
-    const { paseo } = fakeRunner({ waits: [{ status: "idle", lastMessage: "  " }], tail: [{ type: "assistant_message", text: "earlier" }, { type: "tool_call" }, { type: "assistant_message", text: "Rename chats from recent messages" }] });
+  it("reads the helper's own messages from the timeline when the finish result has no text, and answers with the first", async () => {
+    const { paseo } = fakeRunner({ waits: [{ status: "idle", lastMessage: "  " }], tail: [{ type: "assistant_message", text: "Rename chats from recent messages" }, { type: "tool_call" }, { type: "assistant_message", text: "later" }] });
     expect(await run(paseo)).toBe("Rename chats from recent messages");
+  });
+
+  describe("which of the helper's messages is the reply", () => {
+    // The real timeline of the helper that produced the bad title: the first assistant message is the title, the second
+    // answers a plan-mode reminder OpenCode added, and the daemon reported the second one as the helper's last message.
+    const TITLE = "Polish Auto rename popover UI and per-chat toggle";
+    const SPURIOUS = "I'm in Plan mode and there's no new request to work on. Tell me what you'd like planned and I'll walk through the approach here.";
+    const recorded = [{ type: "notification" }, { type: "user_message", text: "the prompt" }, { type: "reasoning", text: "the conversation is about the popover" }, { type: "assistant_message", text: TITLE }, { type: "reasoning", text: "the user message is just a system reminder about Plan mode" }, { type: "assistant_message", text: SPURIOUS }];
+    const usable = (reply: string) => !/^I['’]m in Plan mode/.test(reply);
+
+    it("answers with the reply to the prompt, not a later message the helper adds, even when the daemon calls the later one its last", async () => {
+      const { paseo } = fakeRunner({ waits: [{ status: "idle", lastMessage: SPURIOUS }], tail: recorded });
+      expect(await run(paseo)).toBe(TITLE);
+      expect(await run(fakeRunner({ waits: [{ status: "idle", lastMessage: SPURIOUS }], tail: recorded }).paseo, { accept: usable })).toBe(TITLE);
+    });
+    it("takes the first message that passes the caller's test, so a preamble does not become the title", async () => {
+      const { paseo } = fakeRunner({ waits: [{ status: "idle", lastMessage: "Fix the archive button" }], tail: [{ type: "assistant_message", text: "Let me think about it" }, { type: "assistant_message", text: "Fix the archive button" }] });
+      expect(await run(paseo, { accept: (reply) => !reply.startsWith("Let me") })).toBe("Fix the archive button");
+    });
+    it("returns the first message when none passes, so the caller can say why it was not usable", async () => {
+      const { paseo } = fakeRunner({ waits: [{ status: "idle", lastMessage: "second" }], tail: [{ type: "assistant_message", text: "first" }, { type: "assistant_message", text: "second" }] });
+      expect(await run(paseo, { accept: () => false })).toBe("first");
+    });
+    it("uses the daemon's last message when the timeline has no reply", async () => {
+      const { paseo } = fakeRunner({ waits: [{ status: "idle", lastMessage: "From the daemon" }], tail: [{ type: "reasoning", text: "thinking" }] });
+      expect(await run(paseo, { accept: usable })).toBe("From the daemon");
+    });
+    it("does not lose a reply the daemon gave when the timeline cannot be read, and reports the failure when there is no reply at all", async () => {
+      const given = fakeRunner({ waits: [{ status: "idle", lastMessage: "Fix the archive button" }] });
+      given.agent.timeline.refetch = async () => { throw new Error("timeline unavailable"); };
+      expect(await run(given.paseo)).toBe("Fix the archive button");
+      const none = fakeRunner({ waits: [{ status: "idle", lastMessage: null }] });
+      none.agent.timeline.refetch = async () => { throw new Error("timeline unavailable"); };
+      await expect(run(none.paseo)).rejects.toThrow("timeline unavailable"); expect(none.log.archivedAgents).toBe(1);
+    });
+    it("still turns a provider notice that is the helper's reply into an error", async () => {
+      const { paseo } = fakeRunner({ waits: [{ status: "idle", lastMessage: "x" }], tail: [{ type: "assistant_message", text: "You've hit your usage limit. Try again later." }, { type: "assistant_message", text: "Fix the archive button" }] });
+      await expect(run(paseo)).rejects.toThrow("The model provider reported");
+    });
+    it("picks nothing from no replies, and the first of one", () => {
+      expect(pickReply([])).toBeUndefined(); expect(pickReply(["only"], () => false)).toBe("only"); expect(pickReply(["a", "b"])).toBe("a");
+    });
   });
 
   it("says so when the model sent no reply at all", async () => {
@@ -272,8 +314,10 @@ describe("runTitleModel", () => {
     const remove = vi.spyOn(controller.signal, "removeEventListener");
     const { paseo, log } = fakeRunner();
     expect(await run(paseo, { signal: controller.signal })).toBe("Fix the archive button");
-    expect(add.mock.calls.filter(([event]) => event === "abort")).toHaveLength(1);
-    expect(remove).toHaveBeenCalledWith("abort", add.mock.calls[0][1]);
+    // Waiting for the finish and reading the helper's messages each watch the signal; none may stay attached afterwards.
+    const added = add.mock.calls.filter(([event]) => event === "abort");
+    expect(added.length).toBeGreaterThanOrEqual(1);
+    for (const [, handler] of added) expect(remove).toHaveBeenCalledWith("abort", handler);
     controller.abort(); expect(log.archivedAgents).toBe(1);
   });
 

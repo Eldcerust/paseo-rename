@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PROVISIONAL_TITLE_CHARS, TITLE_MAX_CHARS, isAutoTitle, provisionalTitle, sanitizeTitle } from "./title";
+import { PROVISIONAL_TITLE_CHARS, TITLE_MAX_CHARS, isAutoTitle, isUsableTitle, provisionalTitle, sanitizeTitle } from "./title";
 
 describe("sanitizeTitle", () => {
   it("keeps a clean title as it is", () => {
@@ -98,6 +98,39 @@ describe("sanitizeTitle", () => {
     expect(sanitizeTitle("修复归档按钮的问题")).toBe("修复归档按钮的问题");
     expect(sanitizeTitle("Arreglar el botón de archivar")).toBe("Arreglar el botón de archivar");
     expect(sanitizeTitle("🚀 Ship the plugin")).toBe("🚀 Ship the plugin");
+  });
+});
+
+describe("sanitizeTitle refuses an assistant talking instead of titling", () => {
+  it("refuses the reply a real helper gave after its title, whole or shortened", () => {
+    const reply = "I'm in Plan mode and there's no new request to work on. Tell me what you'd like planned — e.g. further changes to the chat-title plugin's Auto rename popover, the per-chat toggle, or something else — and I'll walk through the approach here. I won't edit files or write a plan file until you ask.";
+    expect(sanitizeTitle(reply)).toBeUndefined();
+    expect(sanitizeTitle("I'm in Plan mode and there's no new request to work on. Tell me what you'd like")).toBeUndefined();
+    expect(sanitizeTitle(reply, 30)).toBeUndefined();
+  });
+  it.each([
+    "I'll walk through the approach here", "I am ready to help with whatever you need", "I can help with that once you share the request",
+    "Let me know what you'd like planned", "Let me think about a good title", "Sure, here is a title", "Sure! Auto rename popover redesign",
+    "Certainly, the title is below", "There's no new request to work on", "No request to work on", "How can I help you today",
+    "Could you clarify what you want titled", "Can you share more details", "Thanks for the update", "Thank you!",
+    "Fix the archive button. Then add tests for the exporter", "Nothing to title here. Tell me what to do next",
+  ])("refuses %j", (reply) => { expect(sanitizeTitle(reply)).toBeUndefined(); });
+  it.each([
+    "Let's Encrypt certificate renewal", "Why does the build fail on Windows?", "I/O scheduler tuning for NVMe", "I Ching coin toss simulator",
+    "Hello world program in Rust", "Plan mode behaviour in OpenCode helpers", "Implement rate limit handling in the API", "Fix v2.0 release notes",
+    "Sure Footing: hiking app UI", "Thanks page redesign for checkout", "Can I use CSS container queries", "Tell me when build finishes notification hook",
+    "Kubernetes ingress 502 errors after deploy", "ホームページのデザイン修正",
+  ])("keeps the real title %j exactly", (title) => { expect(sanitizeTitle(title)).toBe(title); });
+  it("still cleans what it always cleaned", () => {
+    expect(sanitizeTitle("Here is the title:\nFix archive button")).toBe("Fix archive button");
+    expect(sanitizeTitle("<think>hmm</think>Fix archive button.")).toBe("Fix archive button");
+    expect(sanitizeTitle("Title: Fix archive button")).toBe("Fix archive button");
+  });
+  it("is stable: a cleaned title cleans to itself", () => {
+    for (const title of ["Fix archive button in the exporter", "Why does the build fail?", "Let's Encrypt certificate renewal"]) expect(sanitizeTitle(sanitizeTitle(title)!)).toBe(title);
+  });
+  it("tells the runner which replies are usable", () => {
+    expect(isUsableTitle("Fix archive button")).toBe(true); expect(isUsableTitle("I'm in Plan mode and there's no new request")).toBe(false); expect(isUsableTitle("   ")).toBe(false);
   });
 });
 

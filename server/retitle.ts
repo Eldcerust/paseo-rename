@@ -1,5 +1,5 @@
 ﻿import type { ChatTitleValues } from "../shared/settings";
-import { isAutoTitle, sanitizeTitle } from "../shared/title";
+import { isAutoTitle, isUsableTitle, sanitizeTitle } from "../shared/title";
 import type { RetitleResult, RetitleSource, TargetOutcome, WindowMessage } from "../shared/types";
 import { applyTitle, type ApplyPaseo, type SetChatTitle } from "./apply";
 import { agentProviderOf, createCatalog, type Catalog, type CatalogSource } from "./catalog";
@@ -119,7 +119,7 @@ export function createRetitler(deps: RetitlerDeps): Retitler {
 
     const prompt = buildTitlePrompt({ messages: window.messages, currentTitle: snapshot.title });
     if (cancelled()) return { status: "skipped", previous, ...shown, reason: "The rename was cancelled." };
-    const reply = await runModel(paseo, model, prompt, { signal: request.signal, scratchRoot: deps.scratchRoot });
+    const reply = await runModel(paseo, model, prompt, { signal: request.signal, scratchRoot: deps.scratchRoot, accept: isUsableTitle });
     const title = sanitizeTitle(reply);
     if (!title) return { status: "failed", previous, ...shown, reason: "The model's reply could not be used as a title, so the title was left as it was." };
     if (request.signal?.aborted) return { status: "skipped", previous, ...shown, reason: "The rename was cancelled." };
@@ -190,7 +190,7 @@ export function createRetitler(deps: RetitlerDeps): Retitler {
       const model = await catalogFor(paseo).resolve(settings.model);
       checkCancelled();
       const started = Date.now();
-      const reply = await runModel(paseo, model, buildTitlePrompt({ messages: SAMPLE_CHAT }), { scratchRoot: deps.scratchRoot, signal });
+      const reply = await runModel(paseo, model, buildTitlePrompt({ messages: SAMPLE_CHAT }), { scratchRoot: deps.scratchRoot, signal, accept: isUsableTitle });
       checkCancelled();
       const title = sanitizeTitle(reply);
       if (!title) throw new Error(`The model's reply could not be used as a title: ${JSON.stringify(reply.slice(0, 120))}`);
