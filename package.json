@@ -5,6 +5,14 @@
   "license": "MIT",
   "author": "Eldcerust",
   "description": "Renames a Paseo chat from its most recent messages, using a provider and model you choose.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Eldcerust/paseo-rename.git"
+  },
+  "homepage": "https://github.com/Eldcerust/paseo-rename#readme",
+  "bugs": {
+    "url": "https://github.com/Eldcerust/paseo-rename/issues"
+  },
   "files": [
     "LICENSE",
     "paseo-plugin.json",

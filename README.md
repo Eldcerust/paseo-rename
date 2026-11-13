@@ -1,18 +1,43 @@
-# Chat titles for Paseo
+# Paseo Rename
 
-Rename a chat from its recent conversation instead of leaving it named after an old first prompt. Chat titles can update the chat title and its workspace title independently, automatically after completed turns in the chats you switch it on for, or on demand with `/retitle`.
+Rename a Paseo chat from its recent conversation instead of leaving it named after an old first prompt. Update chat and workspace titles independently, choose the model that writes them, and rename on demand or automatically in the chats you opt in.
 
-## Setup
+The plugin appears in Paseo as **Chat titles**, with the installation ID **`chat-title`**. Its composer tool is called **Auto rename**. Automatic renaming is **off by default for every chat**.
+
+[MIT license](LICENSE) · [Report an issue](https://github.com/Eldcerust/paseo-rename/issues)
+
+## Install
 
 Requires Paseo **0.15.4 or later** on both the daemon and app, an available agent provider, and the Paseo CLI on the daemon machine. The chat rename uses the CLI because this SDK version has a workspace title setter but no agent title setter. The implementation has been checked against the Windows daemon; macOS, Linux and native mobile rendering have not been exercised.
 
-Plugins are trusted, unsandboxed code. Enable plugins on the intended daemon only if you trust this source. Install the local repository through **Settings → Plugins → Plugin source**, or with:
+Plugins are trusted, unsandboxed code. Enable plugins on the intended daemon only if you trust this source.
 
-```text
-paseo plugin install /absolute/path/to/paseo-chat-title
+### From the app
+
+1. Open **Settings → Plugins** on the host where your chats run.
+2. Turn on **Enable plugins** if needed.
+3. Paste `https://github.com/Eldcerust/paseo-rename.git` into **Plugin source** and select **Install plugin**.
+4. Confirm **Chat titles** shows **running**.
+
+### From the CLI
+
+Run these commands on the daemon machine after enabling plugins:
+
+```sh
+paseo plugin install https://github.com/Eldcerust/paseo-rename.git
+paseo plugin ls chat-title
 ```
 
-Open **Chat titles** in the normal plugin settings, or **Chat titles settings** from the Command Center. Settings belong to the selected host and are shared by that host's connected clients. Source changes need a plugin reload; the source tests do not establish that the reloaded app UI or installed subprocess works.
+Paseo supplies the runtime libraries and compiles the plugin; installing from Git does not require a separate `npm install`. For another daemon, add the CLI's `--host` option to select that host.
+
+### First rename
+
+1. Open **Chat titles** in plugin settings, or **Chat titles settings** from the Command Center.
+2. Choose an available provider and model, or keep the built-in preference described below.
+3. Use **Generate sample title** to check the saved model without changing a chat.
+4. Open a chat, then choose **Auto rename → Rename now**, or submit **`/retitle`**.
+
+Settings belong to the selected host and are shared by that host's connected clients. Installing the plugin does not switch automatic renaming on for any chat.
 
 ## Use
 
@@ -55,7 +80,8 @@ If none is available, choose a model explicitly. Availability is catalog informa
 | Characters per message | 600 | Cap from 200 to 4000; long text keeps 70% from the beginning and 30% from the end |
 | Chat title | On | Rename the current agent's title |
 | Workspace title | On | Rename its workspace only when no other live chat uses it |
-| Automatic renaming | On | Attempt after the first completed turn, then at the interval below |
+| Rename automatically (per chat) | Off | Remember whether this individual chat may rename itself |
+| Allow automatic renaming (master switch) | On | Permit automatic attempts only for chats explicitly switched on |
 | Completed turns between renames | 4 | Interval from 1 to 50 completed turns |
 
 Automatic attempts are debounced for four seconds and spaced at least a minute apart. Helper agents and subagents do not trigger recursive renaming. Both targets off means no title model call. A model may keep the current title when it still fits; an empty or unusable reply never replaces a title.
@@ -84,11 +110,58 @@ Host-local state records the last titles written, automatic turn counters, which
 
 Workspace titles are deliberately left alone when another live chat shares the workspace. An automatic attempt also protects a workspace title you changed after this plugin last wrote it. Renaming does not rename directories or Git branches. Duplicate requests for the same chat are rejected while a rename is in progress. Unavailable providers, authentication failures, quota errors and missing CLI routes are reported rather than treated as successful renames.
 
-## Development checks
+## Update, troubleshoot and remove
+
+For a Git-installed copy, check for and approve an update with:
+
+```sh
+paseo plugin update chat-title
+```
+
+If the tool is missing or a rename fails, confirm you are viewing the intended host, check the plugin status, and inspect its backend logs:
+
+```sh
+paseo plugin ls chat-title
+paseo plugin logs chat-title
+```
+
+Unavailable models, authentication failures and provider quota errors need to be resolved for the selected provider. The plugin does not silently switch to another model. If the app still shows an old tool after a plugin update or reload, reload the app once.
+
+To remove the plugin:
+
+```sh
+paseo plugin remove chat-title
+```
+
+## Development
+
+Clone the repository and install its locked development dependencies:
+
+```sh
+git clone https://github.com/Eldcerust/paseo-rename.git
+cd paseo-rename
+npm ci
+```
+
+Run the typecheck and non-live tests:
 
 ```text
 npm run typecheck
 node node_modules/vitest/vitest.mjs run --exclude "**/*.live.test.ts"
 ```
 
+To work on a local copy, install its absolute directory path instead of the Git URL. After editing it, typecheck and reload that installation:
+
+```sh
+paseo plugin install /absolute/path/to/paseo-rename
+npm run typecheck
+paseo plugin reload chat-title
+```
+
+Do not install a second copy under the same `chat-title` ID while another installation is present. Use a separate test daemon or an explicit `--id` for a development copy. The source tests do not establish that the reloaded app UI or installed subprocess works; check those separately after reloading.
+
 The opt-in live suites require a running local daemon. Set `CHAT_TITLE_LIVE=1` and run `server/e2e.live.test.ts` to exercise real model calls and throwaway title changes. This consumes provider quota. The suite archives only its own test agents and workspaces, and verifies cleanup. It does not install or reload the plugin, so it does not establish that the app UI or plugin subprocess environment works.
+
+## License
+
+[MIT](LICENSE). Copyright © 2026 Eldcerust.
