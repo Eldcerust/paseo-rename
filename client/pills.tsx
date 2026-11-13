@@ -1,9 +1,10 @@
-import type { PaseoAgent } from "@getpaseo/client";
 import type { PluginButtonRegistration, PluginClientContext } from "@getpaseo/plugin/client";
 import type { RenameActions } from "./commands";
 import { registerComposerPill } from "./hub-compat";
 import { createTitlePopover } from "./pill-popover";
 import { createTitleStore } from "./title-store";
+
+type ListedAgent = Awaited<ReturnType<PluginClientContext["paseo"]["agents"]["list"]>>["entries"][number]["agent"];
 
 export function contributePills(client: PluginClientContext, actions: RenameActions) {
   const lifetime = new AbortController();
@@ -17,10 +18,10 @@ export function contributePills(client: PluginClientContext, actions: RenameActi
   let snapshotEpoch = 0;
   let buffered: (() => void)[] | undefined;
   function remove(id: string) { pills.get(id)?.registration.remove(); pills.delete(id); titles.delete(id); }
-  function observe(agent: PaseoAgent) {
+  function observe(agent: ListedAgent) {
     if (lifetime.signal.aborted) return;
     const workspaceId = agent.workspaceId;
-    const parent = (agent as PaseoAgent & { parentAgentId?: string | null }).parentAgentId;
+    const parent = (agent as ListedAgent & { parentAgentId?: string | null }).parentAgentId;
     if (!workspaceId || agent.archivedAt || agent.internal || parent || agent.labels?.["paseo.parent-agent-id"] || agent.labels?.["chat-title"] === "helper" || agent.title?.startsWith("[Chat titles]")) { remove(agent.id); return; }
     if (pills.get(agent.id)?.workspaceId === workspaceId) { titles.set(agent.id, agent.title); return; }
     remove(agent.id);
