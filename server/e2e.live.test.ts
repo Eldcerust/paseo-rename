@@ -91,6 +91,13 @@ describe.skipIf(!LIVE)("full retitler against the real daemon", () => {
           else if (completion.status === "idle") { finished = true; break; }
         }
         if (!finished) throw new Error("Seed model did not complete within 120 seconds");
+        // Paseo can auto-name the new workspace from this same seed. That name may happen to
+        // equal the model's next title, correctly producing "unchanged" rather than proving a
+        // write. Establish explicit unrelated baselines so both rename assertions are decisive.
+        await setChatTitle(target.id, "Unrelated chat verification baseline");
+        await paseo.workspaces.ref(target.workspaceId).setTitle("Unrelated workspace verification baseline");
+        expect(await chatTitle(target.id)).toBe("Unrelated chat verification baseline");
+        expect(await workspaceTitle(target.workspaceId)).toBe("Unrelated workspace verification baseline");
         const previous = await chatTitle(target.id);
         const previousWorkspace = await workspaceTitle(target.workspaceId);
         const result = await retitler.retitle(asRetitleDaemon(paseo), { agentId: target.id, source: "manual", force: true });
